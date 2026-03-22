@@ -89,7 +89,7 @@ Full schema is in [Gateway configuration](/gateway/configuration).
     tts: {
       auto: "always",
       provider: "openai",
-      summaryModel: "openai/gpt-4.1-mini",
+      summaryModel: "openai/gpt-5.4-mini",
       modelOverrides: {
         enabled: true,
       },

@@ -853,7 +853,7 @@ const result = await api.runtime.subagent.run({
   sessionKey: "agent:main:subagent:search-helper",
   message: "Expand this query into focused follow-up searches.",
   provider: "openai",
-  model: "gpt-4.1-mini",
+  model: "gpt-5.4-mini",
   deliver: false,
 });
 ```

@@ -191,7 +191,7 @@ extension SessionRow {
                 systemSent: false,
                 abortedLastRun: false,
                 tokens: SessionTokenStats(input: 150, output: 220, total: 370, contextTokens: 200_000),
-                model: "gpt-4.1-mini"),
+                model: "gpt-5.4-mini"),
         ]
     }
 }

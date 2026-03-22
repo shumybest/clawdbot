@@ -81,7 +81,7 @@ TTS 配置位于 `openclaw.json` 中的 `messages.tts` 下。完整 schema 在 [
     tts: {
       auto: "always",
       provider: "openai",
-      summaryModel: "openai/gpt-4.1-mini",
+      summaryModel: "openai/gpt-5.4-mini",
       modelOverrides: {
         enabled: true,
       },
