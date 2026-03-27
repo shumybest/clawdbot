@@ -9,27 +9,26 @@ import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { clearBootstrapSnapshotOnSessionRollover } from "../../agents/bootstrap-cache.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { resolveGroupSessionKey } from "../../config/sessions/group.js";
+import { deriveSessionMetaPatch } from "../../config/sessions/metadata.js";
+import { resolveSessionTranscriptPath, resolveStorePath } from "../../config/sessions/paths.js";
 import {
-  DEFAULT_RESET_TRIGGERS,
-  deriveSessionMetaPatch,
   evaluateSessionFreshness,
-  type GroupKeyResolution,
-  loadSessionStore,
-  resolveAndPersistSessionFile,
   resolveChannelResetConfig,
-  resolveThreadFlag,
   resolveSessionResetPolicy,
   resolveSessionResetType,
-  resolveGroupSessionKey,
-  resolveSessionKey,
-  resolveSessionTranscriptPath,
-  resolveStorePath,
+  resolveThreadFlag,
+} from "../../config/sessions/reset.js";
+import { resolveAndPersistSessionFile } from "../../config/sessions/session-file.js";
+import { resolveSessionKey } from "../../config/sessions/session-key.js";
+import { loadSessionStore, updateSessionStore } from "../../config/sessions/store.js";
+import {
+  DEFAULT_RESET_TRIGGERS,
+  type GroupKeyResolution,
   type SessionEntry,
   type SessionScope,
-  updateSessionStore,
-} from "../../config/sessions.js";
+} from "../../config/sessions/types.js";
 import type { TtsAutoMode } from "../../config/types.tts.js";
-import { archiveSessionTranscripts } from "../../gateway/session-utils.fs.js";
 import { resolveConversationIdFromTargets } from "../../infra/outbound/conversation-id.js";
 import { deliverSessionMaintenanceWarning } from "../../infra/session-maintenance-warning.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -51,6 +50,14 @@ import { forkSessionFromParent, resolveParentForkMaxTokens } from "./session-for
 import { buildSessionEndHookPayload, buildSessionStartHookPayload } from "./session-hooks.js";
 
 const log = createSubsystemLogger("session-init");
+let sessionArchiveRuntimePromise: Promise<
+  typeof import("../../gateway/session-archive.runtime.js")
+> | null = null;
+
+function loadSessionArchiveRuntime() {
+  sessionArchiveRuntimePromise ??= import("../../gateway/session-archive.runtime.js");
+  return sessionArchiveRuntimePromise;
+}
 
 export type SessionInitResult = {
   sessionCtx: TemplateContext;
@@ -501,7 +508,7 @@ export async function initSessionState(params: {
         `forking from parent session: parentKey=${parentSessionKey} → sessionKey=${sessionKey} ` +
           `parentTokens=${parentTokens}`,
       );
-      const forked = forkSessionFromParent({
+      const forked = await forkSessionFromParent({
         parentEntry: sessionStore[parentSessionKey],
         agentId,
         sessionsDir: path.dirname(storePath),
@@ -544,6 +551,9 @@ export async function initSessionState(params: {
     sessionEntry.outputTokens = undefined;
     sessionEntry.estimatedCostUsd = undefined;
     sessionEntry.contextTokens = undefined;
+    delete sessionEntry.cliSessionIds;
+    delete sessionEntry.cliSessionBindings;
+    delete sessionEntry.claudeCliSessionId;
   }
   // Preserve per-session overrides while resetting compaction state on /new.
   sessionStore[sessionKey] = { ...sessionStore[sessionKey], ...sessionEntry };
@@ -570,6 +580,7 @@ export async function initSessionState(params: {
 
   // Archive old transcript so it doesn't accumulate on disk (#14869).
   if (previousSessionEntry?.sessionId) {
+    const { archiveSessionTranscripts } = await loadSessionArchiveRuntime();
     archiveSessionTranscripts({
       sessionId: previousSessionEntry.sessionId,
       storePath,
