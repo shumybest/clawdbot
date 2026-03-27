@@ -43,6 +43,9 @@
       "defaultChoice": "npm",
       "minHostVersion": ">=2026.3.26"
     },
+    "startup": {
+      "deferConfiguredChannelFullLoadUntilAfterListen": true
+    },
     "bundle": {
       "stageRuntimeDependencies": true
     },

@@ -63,6 +63,7 @@ export function ensurePluginRegistryLoaded(options?: { scope?: PluginRegistrySco
     throwOnLoadError: true,
     ...(scope === "configured-channels"
       ? {
+          preferSetupRuntimeForChannelPlugins: true,
           onlyPluginIds: resolveConfiguredChannelPluginIds({
             config: resolvedConfig,
             workspaceDir,

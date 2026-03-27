@@ -91,8 +91,13 @@ describe("ensurePluginRegistryLoaded", () => {
     );
     expect(mocks.loadOpenClawPlugins).toHaveBeenCalledWith(
       expect.objectContaining({
+<<<<<<< Updated upstream
         config: autoEnabledConfig,
         onlyPluginIds: ["slack"],
+=======
+        onlyPluginIds: [],
+        preferSetupRuntimeForChannelPlugins: true,
+>>>>>>> Stashed changes
         throwOnLoadError: true,
         workspaceDir: "/tmp/workspace",
       }),
@@ -135,7 +140,11 @@ describe("ensurePluginRegistryLoaded", () => {
     expect(mocks.loadOpenClawPlugins).toHaveBeenCalledTimes(2);
     expect(mocks.loadOpenClawPlugins).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ onlyPluginIds: [], throwOnLoadError: true }),
+      expect.objectContaining({
+        onlyPluginIds: [],
+        preferSetupRuntimeForChannelPlugins: true,
+        throwOnLoadError: true,
+      }),
     );
     expect(mocks.loadOpenClawPlugins).toHaveBeenNthCalledWith(
       2,
@@ -144,5 +153,20 @@ describe("ensurePluginRegistryLoaded", () => {
         throwOnLoadError: true,
       }),
     );
+  });
+
+  it("does not prefer setup runtime for broader channel scans", async () => {
+    const { ensurePluginRegistryLoaded } = await import("./plugin-registry.js");
+
+    ensurePluginRegistryLoaded({ scope: "channels" });
+
+    const firstCall = mocks.loadOpenClawPlugins.mock.calls[0]?.[0];
+    expect(firstCall).toEqual(
+      expect.objectContaining({
+        onlyPluginIds: ["telegram", "slack"],
+        throwOnLoadError: true,
+      }),
+    );
+    expect(firstCall).not.toHaveProperty("preferSetupRuntimeForChannelPlugins");
   });
 });
