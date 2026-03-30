@@ -2,13 +2,43 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
+import { BUNDLED_PLUGIN_PATH_PREFIX } from "./lib/bundled-plugin-paths.mjs";
 
 const logLevel = process.env.OPENCLAW_BUILD_VERBOSE ? "info" : "warn";
 const extraArgs = process.argv.slice(2);
 const INEFFECTIVE_DYNAMIC_IMPORT_RE = /\[INEFFECTIVE_DYNAMIC_IMPORT\]/;
 const UNRESOLVED_IMPORT_RE = /\[UNRESOLVED_IMPORT\]/;
 const ANSI_ESCAPE_RE = new RegExp(String.raw`\u001B\[[0-9;]*m`, "g");
+const require = createRequire(import.meta.url);
+
+function resolveLocalTsdownEntrypoint() {
+  const directPath = path.join(process.cwd(), "node_modules", "tsdown", "dist", "run.mjs");
+  if (fs.existsSync(directPath)) {
+    return directPath;
+  }
+
+  try {
+    return require.resolve("tsdown/dist/run.mjs", { paths: [process.cwd()] });
+  } catch {
+    return null;
+  }
+}
+
+function resolveDeclaredTsdownVersion() {
+  try {
+    const packageJsonPath = path.join(process.cwd(), "package.json");
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+    const version =
+      packageJson?.devDependencies?.tsdown ??
+      packageJson?.dependencies?.tsdown ??
+      packageJson?.optionalDependencies?.tsdown;
+    return typeof version === "string" && version.trim() ? version.trim() : "latest";
+  } catch {
+    return "latest";
+  }
+}
 
 function removeDistPluginNodeModulesSymlinks(rootDir) {
   const extensionsDir = path.join(rootDir, "extensions");
@@ -49,7 +79,10 @@ function findFatalUnresolvedImport(lines) {
     }
 
     const normalizedLine = line.replace(ANSI_ESCAPE_RE, "");
-    if (!normalizedLine.includes("extensions/") && !normalizedLine.includes("node_modules/")) {
+    if (
+      !normalizedLine.includes(BUNDLED_PLUGIN_PATH_PREFIX) &&
+      !normalizedLine.includes("node_modules/")
+    ) {
       return normalizedLine;
     }
   }
@@ -57,15 +90,35 @@ function findFatalUnresolvedImport(lines) {
   return null;
 }
 
-const result = spawnSync(
-  "pnpm",
-  ["exec", "tsdown", "--config-loader", "unrun", "--logLevel", logLevel, ...extraArgs],
-  {
-    encoding: "utf8",
-    stdio: "pipe",
-    shell: process.platform === "win32",
-  },
-);
+const localTsdownEntrypoint = resolveLocalTsdownEntrypoint();
+const result = localTsdownEntrypoint
+  ? spawnSync(
+      process.execPath,
+      [localTsdownEntrypoint, "--config-loader", "unrun", "--logLevel", logLevel, ...extraArgs],
+      {
+        encoding: "utf8",
+        stdio: "pipe",
+      },
+    )
+  : spawnSync(
+      "npm",
+      [
+        "exec",
+        "--yes",
+        `tsdown@${resolveDeclaredTsdownVersion()}`,
+        "--",
+        "--config-loader",
+        "unrun",
+        "--logLevel",
+        logLevel,
+        ...extraArgs,
+      ],
+      {
+        encoding: "utf8",
+        stdio: "pipe",
+        shell: process.platform === "win32",
+      },
+    );
 
 const stdout = result.stdout ?? "";
 const stderr = result.stderr ?? "";
