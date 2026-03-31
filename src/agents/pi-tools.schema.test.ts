@@ -34,4 +34,34 @@ describe("normalizeToolParameters", () => {
     expect(parameters.properties?.query.minLength).toBeUndefined();
     expect(parameters.properties?.query.type).toBe("string");
   });
+
+  it("hardens malformed array schemas by adding missing items recursively", () => {
+    const tool: AnyAgentTool = {
+      name: "dingtalk-office__createEvent",
+      label: "createEvent",
+      description: "create event",
+      parameters: {
+        type: "object",
+        properties: {
+          attendees: {
+            type: "array",
+            description: "attendees without items",
+          },
+          reminders: {
+            type: ["array", "null"],
+            description: "nullable array without items",
+          },
+        },
+      },
+      execute: vi.fn(),
+    };
+
+    const normalized = normalizeToolParameters(tool);
+    const parameters = normalized.parameters as {
+      properties?: Record<string, Record<string, unknown>>;
+    };
+
+    expect(parameters.properties?.attendees.items).toEqual({});
+    expect(parameters.properties?.reminders.items).toEqual({});
+  });
 });

@@ -13,6 +13,7 @@ import {
   disposeSessionMcpRuntime,
   getOrCreateSessionMcpRuntime,
   materializeBundleMcpToolsForRun,
+  type SessionMcpRuntime,
 } from "./pi-bundle-mcp-tools.js";
 
 afterEach(async () => {
@@ -212,5 +213,67 @@ describe("session MCP runtime", () => {
     expect(await waitForFileText(exitMarkerPath)).toBe("exited");
     expect(await fs.readFile(startupCounterPath, "utf8")).toBe("1");
     expect(__testing.getCachedSessionIds()).not.toContain("session-d");
+  });
+
+  it("hardens malformed bundle MCP array schemas before exposing tools", async () => {
+    const runtime: SessionMcpRuntime = {
+      sessionId: "session-schema-fix",
+      workspaceDir: "/tmp/openclaw-bundle-mcp-schema-fix",
+      configFingerprint: "schema-fix",
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+      markUsed: vi.fn(),
+      getCatalog: vi.fn(async () => ({
+        version: 1,
+        generatedAt: Date.now(),
+        servers: {
+          dingtalkOffice: {
+            serverName: "dingtalkOffice",
+            launchSummary: "test",
+            toolCount: 1,
+          },
+        },
+        tools: [
+          {
+            serverName: "dingtalkOffice",
+            safeServerName: "dingtalkOffice",
+            toolName: "createEvent",
+            title: "createEvent",
+            description: "create calendar event",
+            fallbackDescription: "create calendar event",
+            inputSchema: {
+              type: "object",
+              properties: {
+                attendees: {
+                  type: "array",
+                  description: "missing items",
+                },
+                reminders: {
+                  type: ["array", "null"],
+                  description: "nullable array missing items",
+                },
+              },
+            },
+          },
+        ],
+      })),
+      callTool: vi.fn(async () => ({
+        content: [{ type: "text" as const, text: "ok" }],
+      })),
+      dispose: vi.fn(async () => {}),
+    };
+
+    const materialized = await materializeBundleMcpToolsForRun({
+      runtime,
+      modelProvider: "openai",
+      modelId: "gpt-5.4-mini",
+    });
+    const parameters = materialized.tools[0].parameters as {
+      properties?: Record<string, Record<string, unknown>>;
+    };
+
+    expect(runtime.markUsed).toHaveBeenCalledTimes(1);
+    expect(parameters.properties?.attendees.items).toEqual({});
+    expect(parameters.properties?.reminders.items).toEqual({});
   });
 });

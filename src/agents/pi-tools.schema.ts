@@ -6,6 +6,70 @@ import { copyChannelAgentToolMeta } from "./channel-tools.js";
 import type { AnyAgentTool } from "./pi-tools.types.js";
 import { cleanSchemaForGemini } from "./schema/clean-for-gemini.js";
 
+function schemaTypeIncludes(schema: Record<string, unknown>, typeName: string): boolean {
+  const typeValue = schema.type;
+  if (typeValue === typeName) {
+    return true;
+  }
+  return Array.isArray(typeValue) && typeValue.includes(typeName);
+}
+
+function hardenToolSchema(schema: unknown): unknown {
+  if (!schema || typeof schema !== "object") {
+    return schema;
+  }
+  if (Array.isArray(schema)) {
+    return schema.map((entry) => hardenToolSchema(entry));
+  }
+
+  const record = schema as Record<string, unknown>;
+  const hardened: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(record)) {
+    if (key === "properties") {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        hardened[key] = Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).map(([childKey, childValue]) => [
+            childKey,
+            hardenToolSchema(childValue),
+          ]),
+        );
+      } else {
+        hardened[key] = {};
+      }
+      continue;
+    }
+    if (key === "items") {
+      if (Array.isArray(value)) {
+        hardened[key] = value.map((entry) => hardenToolSchema(entry));
+      } else if (value && typeof value === "object") {
+        hardened[key] = hardenToolSchema(value);
+      } else {
+        hardened[key] = {};
+      }
+      continue;
+    }
+    if (key === "additionalProperties" && value && typeof value === "object") {
+      hardened[key] = hardenToolSchema(value);
+      continue;
+    }
+    if (
+      (key === "anyOf" || key === "oneOf" || key === "allOf" || key === "prefixItems") &&
+      Array.isArray(value)
+    ) {
+      hardened[key] = value.map((entry) => hardenToolSchema(entry));
+      continue;
+    }
+    hardened[key] = value;
+  }
+
+  if (schemaTypeIncludes(record, "array") && !("items" in hardened)) {
+    hardened.items = {};
+  }
+
+  return hardened;
+}
+
 function extractEnumValues(schema: unknown): unknown[] | undefined {
   if (!schema || typeof schema !== "object") {
     return undefined;
@@ -100,13 +164,14 @@ export function normalizeToolParameters(
   const unsupportedToolSchemaKeywords = resolveUnsupportedToolSchemaKeywords(options?.modelCompat);
 
   function applyProviderCleaning(s: unknown): unknown {
+    const hardened = hardenToolSchema(s);
     if (isGeminiProvider && !isAnthropicProvider) {
-      return cleanSchemaForGemini(s);
+      return cleanSchemaForGemini(hardened);
     }
     if (unsupportedToolSchemaKeywords.size > 0) {
-      return stripUnsupportedSchemaKeywords(s, unsupportedToolSchemaKeywords);
+      return stripUnsupportedSchemaKeywords(hardened, unsupportedToolSchemaKeywords);
     }
-    return s;
+    return hardened;
   }
 
   // If schema already has type + properties (no top-level anyOf to merge),

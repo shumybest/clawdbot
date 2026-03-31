@@ -493,6 +493,9 @@ export async function compactEmbeddedPiSessionDirect(
           workspaceDir: effectiveWorkspace,
           cfg: params.config,
           reservedToolNames: tools.map((tool) => tool.name),
+          modelProvider: model.provider,
+          modelId,
+          modelCompat: effectiveModel.compat,
         })
       : undefined;
     const bundleLspRuntime = toolsEnabled

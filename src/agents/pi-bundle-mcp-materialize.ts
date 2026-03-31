@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { OpenClawConfig } from "../config/config.js";
+import type { ModelCompatConfig } from "../config/types.models.js";
 import { logWarn } from "../logger.js";
 import {
   buildSafeToolName,
@@ -10,6 +11,7 @@ import {
 } from "./pi-bundle-mcp-names.js";
 import { createSessionMcpRuntime } from "./pi-bundle-mcp-runtime.js";
 import type { BundleMcpToolRuntime, SessionMcpRuntime } from "./pi-bundle-mcp-types.js";
+import { normalizeToolParameters } from "./pi-tools.schema.js";
 
 function toAgentToolResult(params: {
   serverName: string;
@@ -62,6 +64,9 @@ function toAgentToolResult(params: {
 export async function materializeBundleMcpToolsForRun(params: {
   runtime: SessionMcpRuntime;
   reservedToolNames?: Iterable<string>;
+  modelProvider?: string;
+  modelId?: string;
+  modelCompat?: ModelCompatConfig;
 }): Promise<BundleMcpToolRuntime> {
   params.runtime.markUsed();
   const catalog = await params.runtime.getCatalog();
@@ -84,20 +89,28 @@ export async function materializeBundleMcpToolsForRun(params: {
       );
     }
     reservedNames.add(safeToolName.toLowerCase());
-    tools.push({
-      name: safeToolName,
-      label: tool.title ?? tool.toolName,
-      description: tool.description || tool.fallbackDescription,
-      parameters: tool.inputSchema,
-      execute: async (_toolCallId: string, input: unknown) => {
-        const result = await params.runtime.callTool(tool.serverName, tool.toolName, input);
-        return toAgentToolResult({
-          serverName: tool.serverName,
-          toolName: tool.toolName,
-          result,
-        });
+    const materializedTool = normalizeToolParameters(
+      {
+        name: safeToolName,
+        label: tool.title ?? tool.toolName,
+        description: tool.description || tool.fallbackDescription,
+        parameters: tool.inputSchema,
+        execute: async (_toolCallId: string, input: unknown) => {
+          const result = await params.runtime.callTool(tool.serverName, tool.toolName, input);
+          return toAgentToolResult({
+            serverName: tool.serverName,
+            toolName: tool.toolName,
+            result,
+          });
+        },
       },
-    });
+      {
+        modelProvider: params.modelProvider,
+        modelId: params.modelId,
+        modelCompat: params.modelCompat,
+      },
+    );
+    tools.push(materializedTool);
   }
 
   return {
@@ -110,6 +123,9 @@ export async function createBundleMcpToolRuntime(params: {
   workspaceDir: string;
   cfg?: OpenClawConfig;
   reservedToolNames?: Iterable<string>;
+  modelProvider?: string;
+  modelId?: string;
+  modelCompat?: ModelCompatConfig;
 }): Promise<BundleMcpToolRuntime> {
   const runtime = createSessionMcpRuntime({
     sessionId: `bundle-mcp:${crypto.randomUUID()}`,
@@ -119,6 +135,9 @@ export async function createBundleMcpToolRuntime(params: {
   const materialized = await materializeBundleMcpToolsForRun({
     runtime,
     reservedToolNames: params.reservedToolNames,
+    modelProvider: params.modelProvider,
+    modelId: params.modelId,
+    modelCompat: params.modelCompat,
   });
   return {
     tools: materialized.tools,
