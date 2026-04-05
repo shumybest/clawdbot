@@ -48,6 +48,15 @@ describe("checkBrowserOrigin", () => {
       expected: { ok: true as const, matchedBy: "allowlist" as const },
     },
     {
+      name: "accepts custom-protocol desktop origins when explicitly allowlisted",
+      input: {
+        requestHost: "gateway.example.com:18789",
+        origin: "tauri://LOCALHOST",
+        allowedOrigins: ["tauri://localhost"],
+      },
+      expected: { ok: true as const, matchedBy: "allowlist" as const },
+    },
+    {
       name: "accepts wildcard allowlists even alongside specific entries",
       input: {
         requestHost: "gateway.tailnet.ts.net:18789",
