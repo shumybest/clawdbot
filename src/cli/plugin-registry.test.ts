@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { __testing, ensurePluginRegistryLoaded } from "./plugin-registry.js";
 
 const mocks = vi.hoisted(() => ({
   applyPluginAutoEnable: vi.fn(),
@@ -37,16 +38,27 @@ vi.mock("../plugins/runtime.js", () => ({
 
 describe("ensurePluginRegistryLoaded", () => {
   beforeEach(() => {
-    vi.resetModules();
     vi.clearAllMocks();
-    mocks.getActivePluginRegistry.mockReturnValue({
+    __testing.resetPluginRegistryLoadedForTests();
+    mocks.resolveAgentWorkspaceDir.mockReset().mockReturnValue("/tmp/workspace");
+    mocks.resolveDefaultAgentId.mockReset().mockReturnValue("main");
+    mocks.loadConfig.mockReset().mockReturnValue({});
+    mocks.applyPluginAutoEnable
+      .mockReset()
+      .mockImplementation(({ config }) => ({ config, changes: [], autoEnabledReasons: {} }));
+    mocks.loadOpenClawPlugins.mockReset();
+    mocks.loadPluginManifestRegistry.mockReset().mockReturnValue({
+      plugins: [],
+      diagnostics: [],
+    });
+    mocks.getActivePluginRegistry.mockReset().mockReturnValue({
       plugins: [],
       channels: [],
       tools: [],
     });
   });
 
-  it("uses the auto-enabled config snapshot for configured channel scope", async () => {
+  it("uses the auto-enabled config snapshot for configured channel scope", () => {
     const baseConfig = {
       channels: {
         "demo-chat": {
@@ -67,13 +79,17 @@ describe("ensurePluginRegistryLoaded", () => {
     };
 
     mocks.loadConfig.mockReturnValue(baseConfig);
-    mocks.applyPluginAutoEnable.mockReturnValue({ config: autoEnabledConfig, changes: [] });
+    mocks.applyPluginAutoEnable.mockReturnValue({
+      config: autoEnabledConfig,
+      changes: [],
+      autoEnabledReasons: {
+        "demo-chat": ["demo-chat configured"],
+      },
+    });
     mocks.loadPluginManifestRegistry.mockReturnValue({
       plugins: [{ id: "demo-chat", channels: ["demo-chat"] }],
       diagnostics: [],
     });
-
-    const { ensurePluginRegistryLoaded } = await import("./plugin-registry.js");
 
     ensurePluginRegistryLoaded({ scope: "configured-channels" });
 
@@ -92,7 +108,11 @@ describe("ensurePluginRegistryLoaded", () => {
     expect(mocks.loadOpenClawPlugins).toHaveBeenCalledWith(
       expect.objectContaining({
         config: autoEnabledConfig,
-        onlyPluginIds: [],
+        activationSourceConfig: baseConfig,
+        autoEnabledReasons: {
+          "demo-chat": ["demo-chat configured"],
+        },
+        onlyPluginIds: ["demo-chat"],
         preferSetupRuntimeForChannelPlugins: true,
         throwOnLoadError: true,
         workspaceDir: "/tmp/workspace",
@@ -100,14 +120,14 @@ describe("ensurePluginRegistryLoaded", () => {
     );
   });
 
-  it("reloads when escalating from configured-channels to channels", async () => {
+  it("reloads when escalating from configured-channels to channels", () => {
     const config = {
       plugins: { enabled: true },
       channels: { "demo-channel-a": { enabled: false } },
     };
 
     mocks.loadConfig.mockReturnValue(config);
-    mocks.applyPluginAutoEnable.mockReturnValue({ config, changes: [] });
+    mocks.applyPluginAutoEnable.mockReturnValue({ config, changes: [], autoEnabledReasons: {} });
     mocks.loadPluginManifestRegistry.mockReturnValue({
       plugins: [
         { id: "demo-channel-a", channels: ["demo-channel-a"] },
@@ -128,8 +148,6 @@ describe("ensurePluginRegistryLoaded", () => {
         tools: [],
       });
 
-    const { ensurePluginRegistryLoaded } = await import("./plugin-registry.js");
-
     ensurePluginRegistryLoaded({ scope: "configured-channels" });
     ensurePluginRegistryLoaded({ scope: "channels" });
 
@@ -137,6 +155,8 @@ describe("ensurePluginRegistryLoaded", () => {
     expect(mocks.loadOpenClawPlugins).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
+        activationSourceConfig: config,
+        autoEnabledReasons: {},
         onlyPluginIds: [],
         preferSetupRuntimeForChannelPlugins: true,
         throwOnLoadError: true,
@@ -151,21 +171,19 @@ describe("ensurePluginRegistryLoaded", () => {
     );
   });
 
-  it("does not treat a pre-seeded partial registry as all scope", async () => {
+  it("does not treat a pre-seeded partial registry as all scope", () => {
     const config = {
       plugins: { enabled: true },
       channels: { "demo-channel-a": { enabled: true } },
     };
 
     mocks.loadConfig.mockReturnValue(config);
-    mocks.applyPluginAutoEnable.mockReturnValue({ config, changes: [] });
+    mocks.applyPluginAutoEnable.mockReturnValue({ config, changes: [], autoEnabledReasons: {} });
     mocks.getActivePluginRegistry.mockReturnValue({
       plugins: [],
       channels: [{ plugin: { id: "demo-channel-a" } }],
       tools: [],
     });
-
-    const { ensurePluginRegistryLoaded } = await import("./plugin-registry.js");
 
     ensurePluginRegistryLoaded({ scope: "all" });
 
@@ -179,21 +197,19 @@ describe("ensurePluginRegistryLoaded", () => {
     );
   });
 
-  it("does not treat a tools-only pre-seeded registry as channel scope", async () => {
+  it("does not treat a tools-only pre-seeded registry as channel scope", () => {
     const config = {
       plugins: { enabled: true },
       channels: { "demo-channel-a": { enabled: true } },
     };
 
     mocks.loadConfig.mockReturnValue(config);
-    mocks.applyPluginAutoEnable.mockReturnValue({ config, changes: [] });
+    mocks.applyPluginAutoEnable.mockReturnValue({ config, changes: [], autoEnabledReasons: {} });
     mocks.getActivePluginRegistry.mockReturnValue({
       plugins: [],
       channels: [],
       tools: [{ pluginId: "demo-tool" }],
     });
-
-    const { ensurePluginRegistryLoaded } = await import("./plugin-registry.js");
 
     ensurePluginRegistryLoaded({ scope: "configured-channels" });
 
@@ -207,7 +223,7 @@ describe("ensurePluginRegistryLoaded", () => {
     );
   });
 
-  it("reloads when a pre-seeded channel registry is missing the configured channel plugin ids", async () => {
+  it("reloads when a pre-seeded channel registry is missing the configured channel plugin ids", () => {
     const config = {
       plugins: { enabled: true },
       channels: {
@@ -219,7 +235,7 @@ describe("ensurePluginRegistryLoaded", () => {
     };
 
     mocks.loadConfig.mockReturnValue(config);
-    mocks.applyPluginAutoEnable.mockReturnValue({ config, changes: [] });
+    mocks.applyPluginAutoEnable.mockReturnValue({ config, changes: [], autoEnabledReasons: {} });
     mocks.loadPluginManifestRegistry.mockReturnValue({
       plugins: [
         { id: "demo-channel-a", channels: ["demo-channel-a"] },
@@ -233,23 +249,39 @@ describe("ensurePluginRegistryLoaded", () => {
       tools: [],
     });
 
-    const { ensurePluginRegistryLoaded } = await import("./plugin-registry.js");
-
     ensurePluginRegistryLoaded({ scope: "configured-channels" });
 
     expect(mocks.loadOpenClawPlugins).toHaveBeenCalledTimes(1);
     expect(mocks.loadOpenClawPlugins).toHaveBeenCalledWith(
       expect.objectContaining({
         config,
+        activationSourceConfig: config,
+        autoEnabledReasons: {},
         onlyPluginIds: ["demo-channel-a"],
+        preferSetupRuntimeForChannelPlugins: true,
         throwOnLoadError: true,
         workspaceDir: "/tmp/workspace",
       }),
     );
   });
 
-  it("does not prefer setup runtime for broader channel scans", async () => {
-    const { ensurePluginRegistryLoaded } = await import("./plugin-registry.js");
+  it("does not prefer setup runtime for broader channel scans", () => {
+    const config = {
+      channels: {
+        telegram: { botToken: "telegram-bot-token" },
+        slack: { appToken: "slack-app-token" },
+      },
+    };
+
+    mocks.loadConfig.mockReturnValue(config);
+    mocks.applyPluginAutoEnable.mockReturnValue({ config, changes: [], autoEnabledReasons: {} });
+    mocks.loadPluginManifestRegistry.mockReturnValue({
+      plugins: [
+        { id: "telegram", channels: ["telegram"] },
+        { id: "slack", channels: ["slack"] },
+      ],
+      diagnostics: [],
+    });
 
     ensurePluginRegistryLoaded({ scope: "channels" });
 
