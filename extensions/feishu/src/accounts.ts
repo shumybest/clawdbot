@@ -10,7 +10,6 @@ import { coerceSecretRef } from "openclaw/plugin-sdk/provider-auth";
 import { normalizeString } from "./comment-shared.js";
 import type {
   FeishuConfig,
-  FeishuAccountConfig,
   FeishuDefaultAccountSelectionSource,
   FeishuDomain,
   ResolvedFeishuAccount,
@@ -81,8 +80,8 @@ function resolveFeishuSecretLike(params: {
 }
 
 function resolveFeishuBaseCredentials(
-  cfg: FeishuConfig | undefined,
   mode: FeishuCredentialResolutionMode,
+  cfg?: FeishuConfig,
 ): {
   appId: string;
   appSecret: string;
@@ -113,8 +112,8 @@ function resolveFeishuBaseCredentials(
 }
 
 function resolveFeishuEventSecrets(
-  cfg: FeishuConfig | undefined,
   mode: FeishuCredentialResolutionMode,
+  cfg?: FeishuConfig,
 ): {
   encryptKey?: string;
   verificationToken?: string;
@@ -145,9 +144,7 @@ export function resolveDefaultFeishuAccountSelection(cfg: ClawdbotConfig): {
   accountId: string;
   source: FeishuDefaultAccountSelectionSource;
 } {
-  const preferred = normalizeOptionalAccountId(
-    (cfg.channels?.feishu as FeishuConfig | undefined)?.defaultAccount,
-  );
+  const preferred = normalizeOptionalAccountId(cfg.channels?.feishu?.defaultAccount);
   if (preferred) {
     return {
       accountId: preferred,
@@ -179,7 +176,7 @@ export function resolveDefaultFeishuAccountId(cfg: ClawdbotConfig): string {
  * Account-specific fields override top-level fields.
  */
 function mergeFeishuAccountConfig(cfg: ClawdbotConfig, accountId: string): FeishuConfig {
-  const feishuCfg = cfg.channels?.feishu as FeishuConfig | undefined;
+  const feishuCfg = cfg.channels?.feishu;
   return resolveMergedAccountConfig<FeishuConfig>({
     channelConfig: feishuCfg,
     accounts: feishuCfg?.accounts as Record<string, Partial<FeishuConfig>> | undefined,
@@ -199,8 +196,8 @@ export function resolveFeishuCredentials(cfg?: FeishuConfig): {
   domain: FeishuDomain;
 } | null;
 export function resolveFeishuCredentials(
-  cfg: FeishuConfig | undefined,
-  options: {
+  cfg?: FeishuConfig,
+  options?: {
     mode?: FeishuCredentialResolutionMode;
     allowUnresolvedSecretRef?: boolean;
   },
@@ -225,11 +222,11 @@ export function resolveFeishuCredentials(
   domain: FeishuDomain;
 } | null {
   const mode = options?.mode ?? (options?.allowUnresolvedSecretRef ? "inspect" : "strict");
-  const base = resolveFeishuBaseCredentials(cfg, mode);
+  const base = resolveFeishuBaseCredentials(mode, cfg);
   if (!base) {
     return null;
   }
-  const eventSecrets = resolveFeishuEventSecrets(cfg, mode);
+  const eventSecrets = resolveFeishuEventSecrets(mode, cfg);
 
   return {
     ...base,
@@ -258,15 +255,15 @@ function buildResolvedFeishuAccount(params: {
   const selectionSource = hasExplicitAccountId
     ? "explicit"
     : (defaultSelection?.source ?? "fallback");
-  const feishuCfg = params.cfg.channels?.feishu as FeishuConfig | undefined;
+  const feishuCfg = params.cfg.channels?.feishu;
 
   const baseEnabled = feishuCfg?.enabled !== false;
   const merged = mergeFeishuAccountConfig(params.cfg, accountId);
   const accountEnabled = merged.enabled !== false;
   const enabled = baseEnabled && accountEnabled;
-  const baseCreds = resolveFeishuBaseCredentials(merged, params.baseMode);
-  const eventSecrets = resolveFeishuEventSecrets(merged, params.eventSecretMode);
-  const accountName = (merged as FeishuAccountConfig).name;
+  const baseCreds = resolveFeishuBaseCredentials(params.baseMode, merged);
+  const eventSecrets = resolveFeishuEventSecrets(params.eventSecretMode, merged);
+  const accountName = normalizeString((merged as Record<string, unknown>).name);
 
   return {
     accountId,

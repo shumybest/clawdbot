@@ -10,7 +10,6 @@ import {
   type ChannelSetupWizard,
   type DmPolicy,
   type OpenClawConfig,
-  type SecretInput,
 } from "openclaw/plugin-sdk/setup";
 import { inspectFeishuCredentials, resolveDefaultFeishuAccountId } from "./accounts.js";
 import {
@@ -22,7 +21,7 @@ import {
   type AppRegistrationResult,
 } from "./app-registration.js";
 import { probeFeishu } from "./probe.js";
-import type { FeishuConfig, FeishuDomain } from "./types.js";
+import type { FeishuDomain } from "./types.js";
 
 const channel = "feishu" as const;
 
@@ -39,7 +38,7 @@ function normalizeString(value: unknown): string | undefined {
 }
 
 function isFeishuConfigured(cfg: OpenClawConfig): boolean {
-  const feishuCfg = cfg.channels?.feishu as FeishuConfig | undefined;
+  const feishuCfg = cfg.channels?.feishu;
 
   const isAppIdConfigured = (value: unknown): boolean => {
     const asString = normalizeString(value);
@@ -89,7 +88,7 @@ function patchFeishuConfig(
   accountId: string,
   patch: Record<string, unknown>,
 ): OpenClawConfig {
-  const feishuCfg = cfg.channels?.feishu as FeishuConfig | undefined;
+  const feishuCfg = cfg.channels?.feishu;
   if (accountId === DEFAULT_ACCOUNT_ID) {
     return patchTopLevelChannelConfigSection({
       cfg,
@@ -121,7 +120,7 @@ async function promptFeishuAllowFrom(params: {
   accountId?: string;
   prompter: Parameters<NonNullable<ChannelSetupDmPolicy["promptAllowFrom"]>>[0]["prompter"];
 }): Promise<OpenClawConfig> {
-  const feishuCfg = params.cfg.channels?.feishu as FeishuConfig | undefined;
+  const feishuCfg = params.cfg.channels?.feishu;
   const resolvedAccountId = params.accountId ?? resolveDefaultFeishuAccountId(params.cfg);
   const account =
     resolvedAccountId !== DEFAULT_ACCOUNT_ID
@@ -198,7 +197,7 @@ const feishuDmPolicy: ChannelSetupDmPolicy = {
         };
   },
   getCurrent: (cfg, accountId) => {
-    const feishuCfg = cfg.channels?.feishu as FeishuConfig | undefined;
+    const feishuCfg = cfg.channels?.feishu;
     const resolvedAccountId = accountId ?? resolveDefaultFeishuAccountId(cfg);
     if (resolvedAccountId !== DEFAULT_ACCOUNT_ID) {
       const account = feishuCfg?.accounts?.[resolvedAccountId] as
@@ -208,7 +207,7 @@ const feishuDmPolicy: ChannelSetupDmPolicy = {
         return account.dmPolicy as DmPolicy;
       }
     }
-    return (feishuCfg?.dmPolicy as DmPolicy | undefined) ?? "pairing";
+    return feishuCfg?.dmPolicy ?? "pairing";
   },
   setPolicy: (cfg, policy, accountId) => {
     const resolvedAccountId = accountId ?? resolveDefaultFeishuAccountId(cfg);
@@ -314,23 +313,17 @@ async function runNewAppFlow(params: {
   // Resolve target account: defaultAccount > first account key > top-level.
   const targetAccountId = resolveDefaultFeishuAccountId(next);
 
-  // ----- QR scan flow -----
-  let appId: string | null = null;
-  let appSecret: SecretInput | null = null;
-  let appSecretProbeValue: string | null = null;
-  let scanDomain: FeishuDomain | undefined;
-  let scanOpenId: string | undefined;
-
   const scanResult = await runScanToCreate(prompter);
-  if (scanResult) {
-    appId = scanResult.appId;
-    appSecret = scanResult.appSecret;
-    appSecretProbeValue = scanResult.appSecret;
-    scanDomain = scanResult.domain;
-    scanOpenId = scanResult.openId;
-  } else {
+
+  // ----- QR scan flow -----
+  let appId: string | null = scanResult?.appId ?? null;
+  let appSecret: unknown = scanResult?.appSecret ?? null;
+  let appSecretProbeValue: string | null = scanResult?.appSecret ?? null;
+  let scanDomain: FeishuDomain | undefined = scanResult?.domain;
+  let scanOpenId: string | undefined = scanResult?.openId;
+  if (!scanResult) {
     // Fallback to manual input: collect domain, appId, appSecret.
-    const feishuCfg = next.channels?.feishu as FeishuConfig | undefined;
+    const feishuCfg = next.channels?.feishu;
     await noteFeishuCredentialHelp(prompter);
 
     // Domain selection first (needed for API calls).
@@ -423,7 +416,7 @@ async function runEditFlow(params: {
 }): Promise<{ cfg: OpenClawConfig } | null> {
   const { prompter, options } = params;
   const next = params.cfg;
-  const feishuCfg = next.channels?.feishu as FeishuConfig | undefined;
+  const feishuCfg = next.channels?.feishu;
 
   // Check existing appId (top-level or first configured account).
   // Supports both plain string and SecretRef (env-backed) appId values.
@@ -523,7 +516,7 @@ export const feishuSetupWizard: ChannelSetupWizard = {
     unconfiguredScore: 0,
     resolveConfigured: ({ cfg }) => isFeishuConfigured(cfg),
     resolveStatusLines: async ({ cfg, configured }) => {
-      const feishuCfg = cfg.channels?.feishu as FeishuConfig | undefined;
+      const feishuCfg = cfg.channels?.feishu;
       const resolvedCredentials = inspectFeishuCredentials(feishuCfg);
       let probeResult = null;
       if (configured && resolvedCredentials) {

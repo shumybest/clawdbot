@@ -42,14 +42,6 @@ export {
 export type { BrowserControlAuth };
 export { parseBrowserHttpUrl as parseHttpUrl };
 
-type BrowserSsrFPolicyCompat = NonNullable<BrowserConfig["ssrfPolicy"]> & {
-  /**
-   * Legacy raw-config alias. Keep it out of the public BrowserConfig type while
-   * still accepting old user files until doctor rewrites them.
-   */
-  allowPrivateNetwork?: boolean;
-};
-
 export type ResolvedBrowserConfig = {
   enabled: boolean;
   evaluateEnabled: boolean;
@@ -126,9 +118,14 @@ function resolveCdpPortRangeStart(
 
 const normalizeStringList = normalizeOptionalTrimmedStringList;
 
-function resolveBrowserSsrFPolicy(cfg: BrowserConfig | undefined): SsrFPolicy | undefined {
-  const rawPolicy = cfg?.ssrfPolicy as BrowserSsrFPolicyCompat | undefined;
-  const allowPrivateNetwork = rawPolicy?.allowPrivateNetwork;
+function resolveBrowserSsrFPolicy(cfg?: BrowserConfig) {
+  const rawPolicy = cfg?.ssrfPolicy;
+  const rawPolicyRecord =
+    rawPolicy && typeof rawPolicy === "object" ? (rawPolicy as Record<string, unknown>) : undefined;
+  const allowPrivateNetwork =
+    typeof rawPolicyRecord?.allowPrivateNetwork === "boolean"
+      ? rawPolicyRecord.allowPrivateNetwork
+      : undefined;
   const dangerouslyAllowPrivateNetwork = rawPolicy?.dangerouslyAllowPrivateNetwork;
   const allowedHostnames = normalizeStringList(rawPolicy?.allowedHostnames);
   const hostnameAllowlist = normalizeStringList(rawPolicy?.hostnameAllowlist);
@@ -193,7 +190,7 @@ function ensureDefaultUserBrowserProfile(
 }
 
 export function resolveBrowserConfig(
-  cfg: BrowserConfig | undefined,
+  cfg?: BrowserConfig,
   rootConfig?: OpenClawConfig,
 ): ResolvedBrowserConfig {
   const enabled = cfg?.enabled ?? DEFAULT_OPENCLAW_BROWSER_ENABLED;

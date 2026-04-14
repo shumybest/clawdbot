@@ -5,7 +5,6 @@
 
 import crypto from "node:crypto";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/text-runtime";
-import type { SessionEntry } from "../api.js";
 import type { VoiceCallConfig } from "./config.js";
 import type { CoreAgentDeps, CoreConfig } from "./core-bridge.js";
 import { resolveVoiceResponseModel } from "./response-model.js";
@@ -201,7 +200,7 @@ export async function generateVoiceResponse(
   // Load or create session entry
   const sessionStore = agentRuntime.session.loadSessionStore(storePath);
   const now = Date.now();
-  let sessionEntry = sessionStore[sessionKey] as SessionEntry | undefined;
+  let sessionEntry = sessionStore[sessionKey];
 
   if (!sessionEntry) {
     sessionEntry = {

@@ -32,20 +32,6 @@ function resolveLocalTsdownEntrypoint() {
   }
 }
 
-function resolveDeclaredTsdownVersion() {
-  try {
-    const packageJsonPath = path.join(process.cwd(), "package.json");
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-    const version =
-      packageJson?.devDependencies?.tsdown ??
-      packageJson?.dependencies?.tsdown ??
-      packageJson?.optionalDependencies?.tsdown;
-    return typeof version === "string" && version.trim() ? version.trim() : "latest";
-  } catch {
-    return "latest";
-  }
-}
-
 function removeDistPluginNodeModulesSymlinks(rootDir) {
   const extensionsDir = path.join(rootDir, "extensions");
   if (!fs.existsSync(extensionsDir)) {
@@ -118,7 +104,14 @@ export function resolveTsdownBuildInvocation(params = {}) {
   if (localTsdownEntrypoint) {
     return {
       command: params.nodeExecPath ?? process.execPath,
-      args: [localTsdownEntrypoint, "--config-loader", "unrun", "--logLevel", logLevel, ...extraArgs],
+      args: [
+        localTsdownEntrypoint,
+        "--config-loader",
+        "unrun",
+        "--logLevel",
+        logLevel,
+        ...extraArgs,
+      ],
       options: {
         encoding: "utf8",
         stdio: "pipe",

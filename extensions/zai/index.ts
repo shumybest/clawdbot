@@ -12,7 +12,6 @@ import {
   ensureApiKeyFromOptionEnvOrPrompt,
   normalizeApiKeyInput,
   normalizeOptionalSecretInput,
-  type SecretInput,
   upsertAuthProfile,
   validateApiKeyInput,
 } from "openclaw/plugin-sdk/provider-auth-api-key";
@@ -36,27 +35,19 @@ const OPENAI_COMPATIBLE_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
 });
 const ZAI_TOOL_STREAM_HOOKS = buildProviderStreamFamilyHooks("tool-stream-default-on");
 
-function resolveGlm5ForwardCompatModel(
-  ctx: ProviderResolveDynamicModelContext,
-): ProviderRuntimeModel | undefined {
+function resolveGlm5ForwardCompatModel(ctx: ProviderResolveDynamicModelContext) {
   const trimmedModelId = ctx.modelId.trim();
   if (!normalizeLowercaseStringOrEmpty(trimmedModelId).startsWith("glm-5")) {
     return undefined;
   }
 
-  const existing = ctx.modelRegistry.find(
-    PROVIDER_ID,
-    trimmedModelId,
-  ) as ProviderRuntimeModel | null;
+  const existing = ctx.modelRegistry.find(PROVIDER_ID, trimmedModelId);
   if (existing) {
     return existing;
   }
 
   const def = buildZaiModelDefinition({ id: trimmedModelId });
-  const template = ctx.modelRegistry.find(
-    PROVIDER_ID,
-    GLM5_TEMPLATE_MODEL_ID,
-  ) as ProviderRuntimeModel | null;
+  const template = ctx.modelRegistry.find(PROVIDER_ID, GLM5_TEMPLATE_MODEL_ID);
   return normalizeModelCompat({
     ...template,
     id: def.id,
@@ -105,7 +96,9 @@ async function runZaiApiKeyAuth(
   defaultModel: string;
   notes?: string[];
 }> {
-  let capturedSecretInput: SecretInput | undefined;
+  let capturedSecretInput: unknown =
+    normalizeOptionalSecretInput(ctx.opts?.zaiApiKey) ??
+    normalizeOptionalSecretInput(ctx.opts?.token);
   let capturedCredential = false;
   let capturedMode: "plaintext" | "ref" | undefined;
   const apiKey = await ensureApiKeyFromOptionEnvOrPrompt({
@@ -136,7 +129,9 @@ async function runZaiApiKeyAuth(
   if (!capturedCredential) {
     throw new Error("Missing Z.AI API key.");
   }
-  const credentialInput = capturedSecretInput ?? "";
+  const credentialInput = (capturedSecretInput ?? "") as Parameters<
+    typeof buildApiKeyCredential
+  >[1];
 
   const detected = await detectZaiEndpoint({ apiKey, ...(endpoint ? { endpoint } : {}) });
   const modelIdOverride = detected?.modelId;

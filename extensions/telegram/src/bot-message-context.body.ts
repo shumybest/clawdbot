@@ -10,11 +10,7 @@ import {
 import { resolveControlCommandGate } from "openclaw/plugin-sdk/command-auth-native";
 import { hasControlCommand } from "openclaw/plugin-sdk/command-detection";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
-import type {
-  TelegramDirectConfig,
-  TelegramGroupConfig,
-  TelegramTopicConfig,
-} from "openclaw/plugin-sdk/config-runtime";
+import type { TelegramTopicConfig } from "openclaw/plugin-sdk/config-runtime";
 import { resolveChannelGroupPolicy } from "openclaw/plugin-sdk/config-runtime";
 import {
   createInternalHookEvent,
@@ -61,6 +57,10 @@ export type TelegramInboundBodyResult = {
   locationData?: NormalizedLocation;
 };
 
+type TelegramInboundGroupConfig = {
+  disableAudioPreflight?: boolean;
+};
+
 async function resolveStickerVisionSupport(params: {
   cfg: OpenClawConfig;
   agentId?: string;
@@ -88,7 +88,7 @@ export async function resolveTelegramInboundBody(params: {
   routeAgentId?: string;
   effectiveGroupAllow: NormalizedAllowFrom;
   effectiveDmAllow: NormalizedAllowFrom;
-  groupConfig?: TelegramGroupConfig | TelegramDirectConfig;
+  groupConfig?: TelegramInboundGroupConfig;
   topicConfig?: TelegramTopicConfig;
   requireMention?: boolean;
   options?: TelegramMessageContextOptions;
@@ -176,8 +176,7 @@ export async function resolveTelegramInboundBody(params: {
   }
   const hasAudio = allMedia.some((media) => media.contentType?.startsWith("audio/"));
   const disableAudioPreflight =
-    (topicConfig?.disableAudioPreflight ??
-      (groupConfig as TelegramGroupConfig | undefined)?.disableAudioPreflight) === true;
+    (topicConfig?.disableAudioPreflight ?? groupConfig?.disableAudioPreflight) === true;
   const senderAllowedForAudioPreflight =
     !useAccessGroups || !allowForCommands.hasEntries || senderAllowedForCommands;
 

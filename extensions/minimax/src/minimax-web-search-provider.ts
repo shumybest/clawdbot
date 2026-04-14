@@ -294,11 +294,11 @@ export function createMiniMaxWebSearchProvider(): WebSearchProviderPlugin {
     createTool: (ctx) =>
       createMiniMaxToolDefinition(
         mergeScopedSearchConfig(
-          ctx.searchConfig as SearchConfigRecord | undefined,
+          ctx.searchConfig,
           "minimax",
           resolveProviderWebSearchPluginConfig(ctx.config, "minimax"),
           { mirrorApiKeyToTopLevel: true },
-        ) as SearchConfigRecord | undefined,
+        ),
         ctx.config as Record<string, unknown> | undefined,
       ),
   };

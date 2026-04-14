@@ -10,21 +10,18 @@ import {
 } from "openclaw/plugin-sdk/channel-streaming";
 import type { WhatsAppAccountConfig } from "./account-types.js";
 
-function _resolveWhatsAppAccountConfig(
-  cfg: OpenClawConfig,
-  accountId: string,
-): WhatsAppAccountConfig | undefined {
+function _resolveWhatsAppAccountConfig(cfg: OpenClawConfig, accountId: string) {
   return resolveAccountEntry(cfg.channels?.whatsapp?.accounts, accountId);
 }
 
 export function resolveMergedWhatsAppAccountConfig(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
-}): WhatsAppAccountConfig & { accountId: string } {
+}) {
   const rootCfg = params.cfg.channels?.whatsapp;
   const accountId = params.accountId?.trim() || rootCfg?.defaultAccount || DEFAULT_ACCOUNT_ID;
   const merged = resolveMergedAccountConfig<WhatsAppAccountConfig>({
-    channelConfig: rootCfg as WhatsAppAccountConfig | undefined,
+    channelConfig: rootCfg,
     accounts: rootCfg?.accounts as Record<string, Partial<WhatsAppAccountConfig>> | undefined,
     accountId,
     omitKeys: ["defaultAccount"],

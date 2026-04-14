@@ -22,10 +22,7 @@ const { listAccountIds, resolveDefaultAccountId } = createAccountListHelpers("di
 export const listDiscordAccountIds = listAccountIds;
 export const resolveDefaultDiscordAccountId = resolveDefaultAccountId;
 
-export function resolveDiscordAccountConfig(
-  cfg: OpenClawConfig,
-  accountId: string,
-): DiscordAccountConfig | undefined {
+export function resolveDiscordAccountConfig(cfg: OpenClawConfig, accountId: string) {
   return resolveAccountEntry(cfg.channels?.discord?.accounts, accountId);
 }
 
@@ -34,7 +31,7 @@ export function mergeDiscordAccountConfig(
   accountId: string,
 ): DiscordAccountConfig {
   return resolveMergedAccountConfig<DiscordAccountConfig>({
-    channelConfig: cfg.channels?.discord as DiscordAccountConfig | undefined,
+    channelConfig: cfg.channels?.discord,
     accounts: cfg.channels?.discord?.accounts as
       | Record<string, Partial<DiscordAccountConfig>>
       | undefined,
@@ -79,7 +76,7 @@ export function resolveDiscordAccount(params: {
 
 export function resolveDiscordMaxLinesPerMessage(params: {
   cfg: OpenClawConfig;
-  discordConfig?: DiscordAccountConfig | null;
+  discordConfig?: ResolvedDiscordAccount["config"];
   accountId?: string | null;
 }): number | undefined {
   if (typeof params.discordConfig?.maxLinesPerMessage === "number") {

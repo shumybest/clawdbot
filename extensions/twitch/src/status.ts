@@ -41,13 +41,14 @@ export function collectTwitchStatusIssues(
     }
 
     let account: ReturnType<typeof getAccountConfig> | null = null;
-    let cfg: Parameters<typeof resolveTwitchToken>[0] | undefined;
+    let cfg;
     if (getCfg) {
       try {
-        cfg = getCfg() as {
+        const nextCfg = getCfg() as {
           channels?: { twitch?: { accounts?: Record<string, unknown> } };
         };
-        account = getAccountConfig(cfg, accountId);
+        cfg = nextCfg;
+        account = getAccountConfig(nextCfg, accountId);
       } catch {
         // Ignore config access errors
       }
@@ -86,7 +87,7 @@ export function collectTwitchStatusIssues(
     }
 
     const tokenResolution = cfg
-      ? resolveTwitchToken(cfg as Parameters<typeof resolveTwitchToken>[0], { accountId })
+      ? resolveTwitchToken(cfg, { accountId })
       : { token: "", source: "none" };
     if (account && isAccountConfigured(account, tokenResolution.token)) {
       if (account.accessToken?.startsWith("oauth:")) {

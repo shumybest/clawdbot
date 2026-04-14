@@ -24,12 +24,9 @@ import { normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
 import type { TelegramTransport } from "./fetch.js";
 import { resolveTelegramToken } from "./token.js";
 
-let log: ReturnType<typeof createSubsystemLogger> | null = null;
+const log = createSubsystemLogger("telegram/accounts");
 
 function getLog() {
-  if (!log) {
-    log = createSubsystemLogger("telegram/accounts");
-  }
   return log;
 }
 
@@ -117,10 +114,7 @@ export function resolveDefaultTelegramAccountId(cfg: OpenClawConfig): string {
   return resolved;
 }
 
-export function resolveTelegramAccountConfig(
-  cfg: OpenClawConfig,
-  accountId: string,
-): TelegramAccountConfig | undefined {
+export function resolveTelegramAccountConfig(cfg: OpenClawConfig, accountId: string) {
   const normalized = normalizeAccountId(accountId);
   return resolveAccountEntry(cfg.channels?.telegram?.accounts, normalized);
 }
@@ -134,10 +128,7 @@ export function mergeTelegramAccountConfig(
     defaultAccount: _ignoredDefaultAccount,
     groups: channelGroups,
     ...base
-  } = (cfg.channels?.telegram ?? {}) as TelegramAccountConfig & {
-    accounts?: unknown;
-    defaultAccount?: unknown;
-  };
+  } = cfg.channels?.telegram ?? {};
   const account = resolveTelegramAccountConfig(cfg, accountId) ?? {};
 
   // In multi-account setups, channel-level `groups` must NOT be inherited by

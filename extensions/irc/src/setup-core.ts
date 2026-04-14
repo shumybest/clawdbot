@@ -1,4 +1,4 @@
-import type { ChannelSetupAdapter, ChannelSetupInput } from "openclaw/plugin-sdk/channel-setup";
+import type { ChannelSetupAdapter } from "openclaw/plugin-sdk/channel-setup";
 import type { DmPolicy } from "openclaw/plugin-sdk/config-runtime";
 import { normalizeAccountId } from "openclaw/plugin-sdk/routing";
 import {
@@ -18,7 +18,8 @@ const setIrcTopLevelAllowFrom = createTopLevelChannelAllowFromSetter({
   channel,
 });
 
-type IrcSetupInput = ChannelSetupInput & {
+type IrcSetupInput = {
+  name?: string;
   host?: string;
   port?: number | string;
   tls?: boolean;
@@ -53,15 +54,15 @@ export function updateIrcAccountConfig(
     patch,
     ensureChannelEnabled: false,
     ensureAccountEnabled: false,
-  }) as CoreConfig;
+  });
 }
 
 export function setIrcDmPolicy(cfg: CoreConfig, dmPolicy: DmPolicy): CoreConfig {
-  return setIrcTopLevelDmPolicy(cfg, dmPolicy) as CoreConfig;
+  return setIrcTopLevelDmPolicy(cfg, dmPolicy);
 }
 
 export function setIrcAllowFrom(cfg: CoreConfig, allowFrom: string[]): CoreConfig {
-  return setIrcTopLevelAllowFrom(cfg, allowFrom) as CoreConfig;
+  return setIrcTopLevelAllowFrom(cfg, allowFrom);
 }
 
 export function setIrcNickServ(
@@ -134,6 +135,6 @@ export const ircSetupAdapter: ChannelSetupAdapter = {
       channelKey: channel,
       accountId,
       patch,
-    }) as CoreConfig;
+    });
   },
 };

@@ -268,10 +268,10 @@ export function createGeminiWebSearchProvider(): WebSearchProviderPlugin {
     createTool: (ctx) =>
       createGeminiToolDefinition(
         mergeScopedSearchConfig(
-          ctx.searchConfig as SearchConfigRecord | undefined,
+          ctx.searchConfig,
           "gemini",
           resolveProviderWebSearchPluginConfig(ctx.config, "google"),
-        ) as SearchConfigRecord | undefined,
+        ),
       ),
   };
 }

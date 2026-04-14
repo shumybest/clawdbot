@@ -9,7 +9,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import path from "node:path";
-import { normalizeChannelId, type ChannelId } from "openclaw/plugin-sdk/channel-targets";
+import { normalizeChannelId } from "openclaw/plugin-sdk/channel-targets";
 import type {
   OpenClawConfig,
   TtsAutoMode,
@@ -148,9 +148,7 @@ function resolveConfiguredTtsAutoMode(raw: TtsConfig): TtsAutoMode {
   return normalizeTtsAutoMode(raw.auto) ?? (raw.enabled ? "always" : "off");
 }
 
-function normalizeConfiguredSpeechProviderId(
-  providerId: string | undefined,
-): TtsProvider | undefined {
+function normalizeConfiguredSpeechProviderId(providerId: string | undefined) {
   const normalized = normalizeSpeechProviderId(providerId);
   if (!normalized) {
     return undefined;
@@ -169,9 +167,7 @@ function resolveTtsPrefsPathValue(prefsPath: string | undefined): string {
   return path.join(resolveConfigDir(process.env), "settings", "tts.json");
 }
 
-function resolveModelOverridePolicy(
-  overrides: TtsModelOverrideConfig | undefined,
-): ResolvedTtsModelOverrides {
+function resolveModelOverridePolicy(overrides?: TtsModelOverrideConfig): ResolvedTtsModelOverrides {
   const enabled = overrides?.enabled ?? true;
   if (!enabled) {
     return {
@@ -225,10 +221,7 @@ function asProviderConfigMap(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function resolveRawProviderConfig(
-  raw: TtsConfig | undefined,
-  providerId: string,
-): SpeechProviderConfig {
+function resolveRawProviderConfig(providerId: string, raw?: TtsConfig): SpeechProviderConfig {
   if (!raw) {
     return {};
   }
@@ -249,7 +242,7 @@ function resolveLazyProviderConfig(
   if (existing && !effectiveCfg) {
     return existing;
   }
-  const rawConfig = resolveRawProviderConfig(config.rawConfig, canonical);
+  const rawConfig = resolveRawProviderConfig(canonical, config.rawConfig);
   const resolvedProvider = getSpeechProvider(canonical, effectiveCfg);
   const next =
     effectiveCfg && resolvedProvider?.resolveConfig
@@ -337,7 +330,7 @@ export function resolveTtsPrefsPath(config: ResolvedTtsConfig): string {
   return resolveTtsPrefsPathValue(config.prefsPath);
 }
 
-function resolveTtsAutoModeFromPrefs(prefs: TtsUserPrefs): TtsAutoMode | undefined {
+function resolveTtsAutoModeFromPrefs(prefs: TtsUserPrefs) {
   const auto = normalizeTtsAutoMode(prefs.tts?.auto);
   if (auto) {
     return auto;
@@ -585,7 +578,7 @@ export function setLastTtsAttempt(entry: TtsStatusEntry | undefined): void {
 
 const OPUS_CHANNELS = new Set(["telegram", "feishu", "whatsapp", "matrix", "discord"]);
 
-function resolveChannelId(channel: string | undefined): ChannelId | null {
+function resolveChannelId(channel: string | undefined) {
   return channel ? normalizeChannelId(channel) : null;
 }
 
@@ -930,9 +923,17 @@ export async function textToSpeechTelephony(params: {
         logVerbose(`TTS telephony: provider ${provider} skipped (${resolvedProvider.message})`);
         continue;
       }
-      const synthesizeTelephony = resolvedProvider.provider.synthesizeTelephony as NonNullable<
-        typeof resolvedProvider.provider.synthesizeTelephony
-      >;
+      const synthesizeTelephony = resolvedProvider.provider.synthesizeTelephony;
+      if (!synthesizeTelephony) {
+        errors.push(`${provider}: telephony synthesis is not available`);
+        attempts.push({
+          provider,
+          outcome: "skipped",
+          reasonCode: "unsupported_for_telephony",
+          error: "telephony synthesis is not available",
+        });
+        continue;
+      }
       const synthesis = await synthesizeTelephony({
         text: params.text,
         cfg: params.cfg,

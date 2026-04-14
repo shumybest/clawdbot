@@ -279,8 +279,8 @@ function createKimiSchema() {
 }
 
 function createKimiToolDefinition(
-  searchConfig: SearchConfigRecord | undefined,
-  openClawConfig: OpenClawConfig | undefined,
+  searchConfig?: SearchConfigRecord,
+  openClawConfig?: OpenClawConfig,
 ): WebSearchProviderToolDefinition {
   return {
     description:
@@ -460,10 +460,10 @@ export function createKimiWebSearchProvider(): WebSearchProviderPlugin {
     createTool: (ctx) =>
       createKimiToolDefinition(
         mergeScopedSearchConfig(
-          ctx.searchConfig as SearchConfigRecord | undefined,
+          ctx.searchConfig,
           "kimi",
           resolveProviderWebSearchPluginConfig(ctx.config, "moonshot"),
-        ) as SearchConfigRecord | undefined,
+        ),
         ctx.config,
       ),
   };
