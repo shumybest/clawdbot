@@ -3,13 +3,12 @@ import type { SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
 import type { SettingsManager } from "@mariozechner/pi-coding-agent";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
-import type { OpenClawConfig } from "../../config/config.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
 import {
   prepareProviderExtraParams as prepareProviderExtraParamsRuntime,
   wrapProviderStreamFn as wrapProviderStreamFnRuntime,
 } from "../../plugins/provider-runtime.js";
-import type { ProviderRuntimeModel } from "../../plugins/types.js";
-import { resolveCacheRetention } from "./anthropic-cache-retention.js";
 import { createGoogleThinkingPayloadWrapper } from "./google-stream-wrappers.js";
 import { log } from "./logger.js";
 import { createMinimaxThinkingDisabledWrapper } from "./minimax-stream-wrappers.js";
@@ -21,11 +20,13 @@ import {
   createOpenAIFastModeWrapper,
   createOpenAIResponsesContextManagementWrapper,
   createOpenAIServiceTierWrapper,
+  createOpenAIStringContentWrapper,
   createOpenAITextVerbosityWrapper,
   resolveOpenAIFastMode,
   resolveOpenAIServiceTier,
   resolveOpenAITextVerbosity,
 } from "./openai-stream-wrappers.js";
+import { resolveCacheRetention } from "./prompt-cache-retention.js";
 import { createOpenRouterSystemCacheWrapper } from "./proxy-stream-wrappers.js";
 import { streamWithPayloadPatch } from "./stream-payload-utils.js";
 
@@ -75,10 +76,6 @@ export function resolveExtraParams(params: {
       ? params.cfg.agents.list.find((agent) => agent.id === params.agentId)?.params
       : undefined;
 
-  if (!defaultParams && !globalParams && !agentParams) {
-    return undefined;
-  }
-
   const merged = Object.assign({}, defaultParams, globalParams, agentParams);
   const resolvedParallelToolCalls = resolveAliasedParamValue(
     [defaultParams, globalParams, agentParams],
@@ -110,7 +107,9 @@ export function resolveExtraParams(params: {
     delete merged.cached_content;
   }
 
-  return merged;
+  applyDefaultOpenAIGptRuntimeParams(params, merged);
+
+  return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
 type CacheRetentionStreamOptions = Partial<SimpleStreamOptions> & {
@@ -192,6 +191,37 @@ function sanitizeExtraParamsRecord(
       ([key]) => key !== "__proto__" && key !== "prototype" && key !== "constructor",
     ),
   );
+}
+
+function shouldApplyDefaultOpenAIGptRuntimeParams(params: {
+  provider: string;
+  modelId: string;
+}): boolean {
+  if (params.provider !== "openai" && params.provider !== "openai-codex") {
+    return false;
+  }
+  return /^gpt-5(?:[.-]|$)/i.test(params.modelId);
+}
+
+function applyDefaultOpenAIGptRuntimeParams(
+  params: { provider: string; modelId: string },
+  merged: Record<string, unknown>,
+): void {
+  if (!shouldApplyDefaultOpenAIGptRuntimeParams(params)) {
+    return;
+  }
+  if (
+    !Object.hasOwn(merged, "parallel_tool_calls") &&
+    !Object.hasOwn(merged, "parallelToolCalls")
+  ) {
+    merged.parallel_tool_calls = true;
+  }
+  if (!Object.hasOwn(merged, "text_verbosity") && !Object.hasOwn(merged, "textVerbosity")) {
+    merged.text_verbosity = "low";
+  }
+  if (!Object.hasOwn(merged, "openaiWsWarmup")) {
+    merged.openaiWsWarmup = true;
+  }
 }
 
 export function resolveAgentTransportOverride(params: {
@@ -368,6 +398,7 @@ function applyPostPluginStreamWrappers(
   ctx: ApplyExtraParamsContext & { providerWrapperHandled: boolean },
 ): void {
   ctx.agent.streamFn = createOpenRouterSystemCacheWrapper(ctx.agent.streamFn);
+  ctx.agent.streamFn = createOpenAIStringContentWrapper(ctx.agent.streamFn);
 
   if (!ctx.providerWrapperHandled) {
     // Guard Google-family payloads against invalid negative thinking budgets
