@@ -254,6 +254,18 @@ describe("safeFetch", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("blocks private hosts with the default resolver", async () => {
+    const fetchMock = vi.fn();
+    await expect(
+      safeFetch({
+        url: "https://localhost/file.pdf",
+        allowHosts: ["localhost"],
+        fetchFn: fetchMock as unknown as typeof fetch,
+      }),
+    ).rejects.toThrow("Initial download URL blocked");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("blocks when initial URL DNS resolution fails", async () => {
     const fetchMock = vi.fn();
     await expect(
@@ -443,18 +455,20 @@ describe("Graph shared-link helpers", () => {
   it("tryBuildGraphSharesUrlForSharedLink rewrites SharePoint URLs", () => {
     const url = "https://contoso.sharepoint.com/personal/user/Documents/report.pdf";
     const result = tryBuildGraphSharesUrlForSharedLink(url);
-    expect(result).toBeDefined();
-    expect(result).toMatch(
-      /^https:\/\/graph\.microsoft\.com\/v1\.0\/shares\/u![A-Za-z0-9_-]+\/driveItem\/content$/,
+    expect(result).toEqual(
+      expect.stringMatching(
+        /^https:\/\/graph\.microsoft\.com\/v1\.0\/shares\/u![A-Za-z0-9_-]+\/driveItem\/content$/,
+      ),
     );
   });
 
   it("tryBuildGraphSharesUrlForSharedLink rewrites OneDrive URLs", () => {
     const url = "https://1drv.ms/b/s!AkxYabcdefg";
     const result = tryBuildGraphSharesUrlForSharedLink(url);
-    expect(result).toBeDefined();
-    expect(result).toMatch(
-      /^https:\/\/graph\.microsoft\.com\/v1\.0\/shares\/u![A-Za-z0-9_-]+\/driveItem\/content$/,
+    expect(result).toEqual(
+      expect.stringMatching(
+        /^https:\/\/graph\.microsoft\.com\/v1\.0\/shares\/u![A-Za-z0-9_-]+\/driveItem\/content$/,
+      ),
     );
   });
 
@@ -478,7 +492,7 @@ describe("msteams inline image limits", () => {
       },
     ];
     const out = extractInlineImageCandidates(attachments, { maxInlineBytes: 4 });
-    expect(out).toEqual([]);
+    expect(out).toStrictEqual([]);
   });
 
   it("accepts inline data images within limit", () => {

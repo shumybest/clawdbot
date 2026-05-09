@@ -1,9 +1,9 @@
 import { normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
 import {
   GROUP_POLICY_BLOCKED_LABEL,
+  createChannelMessageReplyPipeline,
   createChannelPairingController,
   deliverFormattedTextWithAttachments,
-  dispatchInboundReplyWithBase,
   logInboundDrop,
   readStoreAllowFromForDmPolicy,
   resolveAllowlistProviderRuntimeGroupPolicy,
@@ -31,16 +31,18 @@ import type { CoreConfig, NextcloudTalkInboundMessage } from "./types.js";
 const CHANNEL_ID = "nextcloud-talk" as const;
 
 async function deliverNextcloudTalkReply(params: {
+  cfg: CoreConfig;
   payload: OutboundReplyPayload;
   roomToken: string;
   accountId: string;
   statusSink?: (patch: { lastOutboundAt?: number }) => void;
 }): Promise<void> {
-  const { payload, roomToken, accountId, statusSink } = params;
+  const { cfg, payload, roomToken, accountId, statusSink } = params;
   await deliverFormattedTextWithAttachments({
     payload,
     send: async ({ text, replyToId }) => {
       await sendMessageNextcloudTalk(roomToken, text, {
+        cfg,
         accountId,
         replyTo: replyToId,
       });
@@ -177,7 +179,10 @@ export async function handleNextcloudTalkInbound(params: {
           senderIdLine: `Your Nextcloud user id: ${senderId}`,
           meta: { name: senderName || undefined },
           sendPairingReply: async (text) => {
-            await sendMessageNextcloudTalk(roomToken, text, { accountId: account.accountId });
+            await sendMessageNextcloudTalk(roomToken, text, {
+              cfg: config,
+              accountId: account.accountId,
+            });
             statusSink?.({ lastOutboundAt: Date.now() });
           },
           onReplyError: (err) => {
@@ -281,34 +286,52 @@ export async function handleNextcloudTalkInbound(params: {
     CommandAuthorized: commandAuthorized,
   });
 
-  await dispatchInboundReplyWithBase({
+  const { onModelSelected, ...replyPipeline } = createChannelMessageReplyPipeline({
     cfg: config as OpenClawConfig,
+    agentId: route.agentId,
     channel: CHANNEL_ID,
     accountId: account.accountId,
-    route,
+  });
+
+  await core.channel.turn.runPrepared({
+    channel: CHANNEL_ID,
+    accountId: account.accountId,
+    routeSessionKey: route.sessionKey,
     storePath,
     ctxPayload,
-    core,
-    deliver: async (payload) => {
-      await deliverNextcloudTalkReply({
-        payload,
-        roomToken,
-        accountId: account.accountId,
-        statusSink,
-      });
-    },
-    onRecordError: (err) => {
-      runtime.error?.(`nextcloud-talk: failed updating session meta: ${String(err)}`);
-    },
-    onDispatchError: (err, info) => {
-      runtime.error?.(`nextcloud-talk ${info.kind} reply failed: ${String(err)}`);
-    },
-    replyOptions: {
-      skillFilter: roomConfig?.skills,
-      disableBlockStreaming:
-        typeof account.config.blockStreaming === "boolean"
-          ? !account.config.blockStreaming
-          : undefined,
+    recordInboundSession: core.channel.session.recordInboundSession,
+    runDispatch: async () =>
+      await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+        ctx: ctxPayload,
+        cfg: config as OpenClawConfig,
+        dispatcherOptions: {
+          ...replyPipeline,
+          deliver: async (payload) => {
+            await deliverNextcloudTalkReply({
+              cfg: config,
+              payload,
+              roomToken,
+              accountId: account.accountId,
+              statusSink,
+            });
+          },
+          onError: (err, info) => {
+            runtime.error?.(`nextcloud-talk ${info.kind} reply failed: ${String(err)}`);
+          },
+        },
+        replyOptions: {
+          onModelSelected,
+          skillFilter: roomConfig?.skills,
+          disableBlockStreaming:
+            typeof account.config.blockStreaming === "boolean"
+              ? !account.config.blockStreaming
+              : undefined,
+        },
+      }),
+    record: {
+      onRecordError: (err) => {
+        runtime.error?.(`nextcloud-talk: failed updating session meta: ${String(err)}`);
+      },
     },
   });
 }

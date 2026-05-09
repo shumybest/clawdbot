@@ -1,9 +1,10 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { MemorySearchResult } from "openclaw/plugin-sdk/memory-core-host-runtime-files";
 import { formatMemoryDreamingDay } from "openclaw/plugin-sdk/memory-core-host-status";
 import { appendMemoryHostEvent } from "openclaw/plugin-sdk/memory-host-events";
+import { privateFileStore } from "openclaw/plugin-sdk/security-runtime";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/text-runtime";
 import {
   deriveConceptTags,
@@ -37,10 +38,13 @@ const SHORT_TERM_LOCK_RETRY_DELAY_MS = 40;
 const PHASE_SIGNAL_LIGHT_BOOST_MAX = 0.06;
 const PHASE_SIGNAL_REM_BOOST_MAX = 0.09;
 const PHASE_SIGNAL_HALF_LIFE_DAYS = 14;
+const DREAMING_TRANSCRIPT_PROMPT_LINE_RE =
+  /\[[^\]]*dreaming-narrative[^\]]*]\s*(?:User|Assistant):\s*Write a dream diary entry from these memory fragments:?/i;
+const DREAMING_DIFF_PREFIX_RE = /@@\s*-\d+(?:,\d+)?\s+[-*+]\s+/iy;
 const inProcessShortTermLocks = new Map<string, Promise<void>>();
 const ensuredShortTermDirs = new Map<string, Promise<void>>();
 
-export type PromotionWeights = {
+type PromotionWeights = {
   frequency: number;
   relevance: number;
   diversity: number;
@@ -49,7 +53,7 @@ export type PromotionWeights = {
   conceptual: number;
 };
 
-export const DEFAULT_PROMOTION_WEIGHTS: PromotionWeights = {
+const DEFAULT_PROMOTION_WEIGHTS: PromotionWeights = {
   frequency: 0.24,
   relevance: 0.3,
   diversity: 0.15,
@@ -99,7 +103,7 @@ type ShortTermPhaseSignalStore = {
   entries: Record<string, ShortTermPhaseSignalEntry>;
 };
 
-export type PromotionComponents = {
+type PromotionComponents = {
   frequency: number;
   relevance: number;
   diversity: number;
@@ -133,7 +137,7 @@ export type PromotionCandidate = {
   components: PromotionComponents;
 };
 
-export type ShortTermAuditIssue = {
+type ShortTermAuditIssue = {
   severity: "warn" | "error";
   code:
     | "recall-store-unreadable"
@@ -176,7 +180,7 @@ export type RepairShortTermPromotionArtifactsResult = {
   removedStaleLock: boolean;
 };
 
-export type RankShortTermPromotionOptions = {
+type RankShortTermPromotionOptions = {
   workspaceDir: string;
   limit?: number;
   minScore?: number;
@@ -189,7 +193,7 @@ export type RankShortTermPromotionOptions = {
   nowMs?: number;
 };
 
-export type ApplyShortTermPromotionsOptions = {
+type ApplyShortTermPromotionsOptions = {
   workspaceDir: string;
   candidates: PromotionCandidate[];
   limit?: number;
@@ -201,7 +205,7 @@ export type ApplyShortTermPromotionsOptions = {
   timezone?: string;
 };
 
-export type ApplyShortTermPromotionsResult = {
+type ApplyShortTermPromotionsResult = {
   memoryPath: string;
   applied: number;
   appended: number;
@@ -233,6 +237,62 @@ function normalizeSnippet(raw: string): string {
     return "";
   }
   return trimmed.replace(/\s+/g, " ");
+}
+
+function consumeDreamingLeadPrefix(snippet: string): string {
+  let index = 0;
+  while (index < snippet.length) {
+    DREAMING_DIFF_PREFIX_RE.lastIndex = index;
+    const diffMatch = DREAMING_DIFF_PREFIX_RE.exec(snippet);
+    if (diffMatch) {
+      index = DREAMING_DIFF_PREFIX_RE.lastIndex;
+      continue;
+    }
+    const char = snippet[index];
+    if (char === "[" || char === "(") {
+      index += 1;
+      while (snippet[index] === " ") {
+        index += 1;
+      }
+      continue;
+    }
+    if (
+      (char === "-" || char === "*" || char === "+" || char === ">") &&
+      snippet[index + 1] === " "
+    ) {
+      index += 2;
+      continue;
+    }
+    break;
+  }
+  return snippet.slice(index);
+}
+
+function hasDreamingNarrativeLead(snippet: string): boolean {
+  const withoutPrefix = consumeDreamingLeadPrefix(snippet);
+  return /^Candidate:/i.test(withoutPrefix) || /^Reflections?:/i.test(withoutPrefix);
+}
+
+function isContaminatedDreamingSnippet(raw: string): boolean {
+  const snippet = normalizeSnippet(raw);
+  if (!snippet) {
+    return false;
+  }
+  if (
+    /<!--\s*openclaw-memory-promotion:/i.test(snippet) ||
+    DREAMING_TRANSCRIPT_PROMPT_LINE_RE.test(snippet)
+  ) {
+    return true;
+  }
+
+  const hasNarrativeLead = hasDreamingNarrativeLead(snippet);
+  const hasConfidence = /\bconfidence:\s*\d/i.test(snippet);
+  const hasEvidence = /\bevidence:\s*(?:memory\/\.dreams\/session-corpus\/|memory\/)/i.test(
+    snippet,
+  );
+  const hasStatus = /\bstatus:\s*staged\b/i.test(snippet);
+  const hasRecalls = /\brecalls:\s*\d+\b/i.test(snippet);
+  return hasNarrativeLead && hasConfidence && hasEvidence && hasStatus && hasRecalls;
 }
 
 function normalizeMemoryPath(rawPath: string): string {
@@ -409,6 +469,9 @@ function normalizeStore(raw: unknown, nowIso: string): ShortTermRecallStore {
           ? entry.claimHash.trim()
           : undefined;
       const snippet = typeof entry.snippet === "string" ? normalizeSnippet(entry.snippet) : "";
+      if (snippet && isContaminatedDreamingSnippet(snippet)) {
+        continue;
+      }
       const queryHashes = Array.isArray(entry.queryHashes)
         ? normalizeDistinctStrings(entry.queryHashes, MAX_QUERY_HASHES)
         : [];
@@ -694,11 +757,11 @@ async function withShortTermLock<T>(workspaceDir: string, task: () => Promise<T>
 }
 
 async function readStore(workspaceDir: string, nowIso: string): Promise<ShortTermRecallStore> {
-  const storePath = resolveStorePath(workspaceDir);
   try {
-    const raw = await fs.readFile(storePath, "utf-8");
-    const parsed = JSON.parse(raw) as unknown;
-    return normalizeStore(parsed, nowIso);
+    return normalizeStore(
+      await privateFileStore(workspaceDir).readJsonIfExists(SHORT_TERM_STORE_RELATIVE_PATH),
+      nowIso,
+    );
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
       return emptyStore(nowIso);
@@ -766,15 +829,12 @@ async function readPhaseSignalStore(
   workspaceDir: string,
   nowIso: string,
 ): Promise<ShortTermPhaseSignalStore> {
-  const phaseSignalPath = resolvePhaseSignalPath(workspaceDir);
   try {
-    const raw = await fs.readFile(phaseSignalPath, "utf-8");
-    return normalizePhaseSignalStore(JSON.parse(raw) as unknown, nowIso);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException)?.code;
-    if (code === "ENOENT" || err instanceof SyntaxError) {
-      return emptyPhaseSignalStore(nowIso);
-    }
+    return normalizePhaseSignalStore(
+      await privateFileStore(workspaceDir).readJsonIfExists(SHORT_TERM_PHASE_SIGNAL_RELATIVE_PATH),
+      nowIso,
+    );
+  } catch {
     return emptyPhaseSignalStore(nowIso);
   }
 }
@@ -783,19 +843,17 @@ async function writePhaseSignalStore(
   workspaceDir: string,
   store: ShortTermPhaseSignalStore,
 ): Promise<void> {
-  const phaseSignalPath = resolvePhaseSignalPath(workspaceDir);
   await ensureShortTermArtifactsDir(workspaceDir);
-  const tmpPath = `${phaseSignalPath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-  await fs.writeFile(tmpPath, `${JSON.stringify(store, null, 2)}\n`, "utf-8");
-  await fs.rename(tmpPath, phaseSignalPath);
+  await privateFileStore(workspaceDir).writeJson(SHORT_TERM_PHASE_SIGNAL_RELATIVE_PATH, store, {
+    trailingNewline: true,
+  });
 }
 
 async function writeStore(workspaceDir: string, store: ShortTermRecallStore): Promise<void> {
-  const storePath = resolveStorePath(workspaceDir);
   await ensureShortTermArtifactsDir(workspaceDir);
-  const tmpPath = `${storePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-  await fs.writeFile(tmpPath, `${JSON.stringify(store, null, 2)}\n`, "utf-8");
-  await fs.rename(tmpPath, storePath);
+  await privateFileStore(workspaceDir).writeJson(SHORT_TERM_STORE_RELATIVE_PATH, store, {
+    trailingNewline: true,
+  });
 }
 
 export function isShortTermMemoryPath(filePath: string): boolean {
@@ -810,6 +868,43 @@ export function isShortTermMemoryPath(filePath: string): boolean {
     return true;
   }
   return SHORT_TERM_BASENAME_RE.test(normalized);
+}
+
+async function shortTermRecallSourceExists(params: {
+  workspaceDir: string;
+  entry: Pick<ShortTermRecallEntry, "path">;
+}): Promise<boolean> {
+  const workspaceDir = params.workspaceDir.trim();
+  if (!workspaceDir) {
+    return false;
+  }
+  for (const sourcePath of resolveShortTermSourcePathCandidates(workspaceDir, params.entry.path)) {
+    try {
+      const stat = await fs.stat(sourcePath);
+      if (stat.isFile()) {
+        return true;
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        continue;
+      }
+      throw err;
+    }
+  }
+  return false;
+}
+
+export async function filterLiveShortTermRecallEntries(params: {
+  workspaceDir: string;
+  entries: ShortTermRecallEntry[];
+}): Promise<ShortTermRecallEntry[]> {
+  const results = await Promise.all(
+    params.entries.map(async (entry) => ({
+      entry,
+      exists: await shortTermRecallSourceExists({ workspaceDir: params.workspaceDir, entry }),
+    })),
+  );
+  return results.filter((result) => result.exists).map((result) => result.entry);
 }
 
 export async function recordShortTermRecalls(params: {
@@ -849,6 +944,9 @@ export async function recordShortTermRecalls(params: {
     for (const result of relevant) {
       const normalizedPath = normalizeMemoryPath(result.path);
       const snippet = normalizeSnippet(result.snippet);
+      if (!snippet || isContaminatedDreamingSnippet(snippet)) {
+        continue;
+      }
       const claimHash = snippet ? buildClaimHash(snippet) : undefined;
       const groundedKey = claimHash
         ? buildEntryKey({
@@ -954,6 +1052,7 @@ export async function recordGroundedShortTermCandidates(params: {
       const normalizedPath = normalizeMemoryPath(item.path);
       if (
         !snippet ||
+        isContaminatedDreamingSnippet(snippet) ||
         !normalizedPath ||
         !isShortTermMemoryPath(normalizedPath) ||
         !Number.isFinite(item.startLine) ||
@@ -1134,6 +1233,9 @@ export async function rankShortTermPromotionCandidates(
 
   for (const entry of Object.values(store.entries)) {
     if (!entry || entry.source !== "memory" || !isShortTermMemoryPath(entry.path)) {
+      continue;
+    }
+    if (isContaminatedDreamingSnippet(entry.snippet)) {
       continue;
     }
     if (!includePromoted && entry.promotedAt) {
@@ -1471,6 +1573,9 @@ export async function applyShortTermPromotions(
     const store = await readStore(workspaceDir, nowIso);
     const selected = options.candidates
       .filter((candidate) => {
+        if (isContaminatedDreamingSnippet(candidate.snippet)) {
+          return false;
+        }
         if (candidate.promotedAt) {
           return false;
         }
@@ -1506,7 +1611,7 @@ export async function applyShortTermPromotions(
     const rehydratedSelected: PromotionCandidate[] = [];
     for (const candidate of selected) {
       const rehydrated = await rehydratePromotionCandidate(workspaceDir, candidate);
-      if (rehydrated) {
+      if (rehydrated && !isContaminatedDreamingSnippet(rehydrated.snippet)) {
         rehydratedSelected.push(rehydrated);
       }
     }
@@ -1881,4 +1986,5 @@ export const __testing = {
   calculatePhaseSignalBoost,
   buildClaimHash,
   totalSignalCountForEntry,
+  isContaminatedDreamingSnippet,
 };

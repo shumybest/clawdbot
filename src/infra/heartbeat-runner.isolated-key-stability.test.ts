@@ -12,7 +12,8 @@ import {
 } from "./system-events.js";
 
 vi.mock("./outbound/deliver.js", () => ({
-  deliverOutboundPayloads: vi.fn().mockResolvedValue(undefined),
+  deliverOutboundPayloads: vi.fn().mockResolvedValue([]),
+  deliverOutboundPayloadsInternal: vi.fn().mockResolvedValue([]),
 }));
 
 afterEach(() => {
@@ -24,7 +25,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
   /**
    * Simulates the wake-request feedback loop:
    *   1. Normal heartbeat tick produces sessionKey "agent:main:main:heartbeat"
-   *   2. An exec/subagent event during that tick calls requestHeartbeatNow()
+   *   2. An exec/subagent event during that tick calls requestHeartbeat()
    *      with the already-suffixed key "agent:main:main:heartbeat"
    *   3. The wake handler passes that key back into runHeartbeatOnce(sessionKey: ...)
    *
@@ -52,7 +53,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
       sessionKey: params.sessionKey,
       deps: {
         getQueueSize: () => 0,
-        nowMs: () => 0,
+        nowMs: () => Date.now(),
       },
     });
 
@@ -111,7 +112,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         JSON.stringify({
           [alreadySuffixedKey]: {
             sessionId: "sid",
-            updatedAt: 1,
+            updatedAt: Date.now(),
             lastChannel: "whatsapp",
             lastProvider: "whatsapp",
             lastTo: "+1555",
@@ -128,7 +129,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         sessionKey: alreadySuffixedKey,
         deps: {
           getQueueSize: () => 0,
-          nowMs: () => 0,
+          nowMs: () => Date.now(),
         },
       });
 
@@ -221,11 +222,11 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         reason: "interval",
         deps: {
           getQueueSize: () => 0,
-          nowMs: () => 0,
+          nowMs: () => Date.now(),
         },
       });
 
-      expect(peekSystemEventEntries(baseSessionKey)).toEqual([]);
+      expect(peekSystemEventEntries(baseSessionKey)).toStrictEqual([]);
 
       await runHeartbeatOnce({
         cfg,
@@ -233,7 +234,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         reason: "interval",
         deps: {
           getQueueSize: () => 0,
-          nowMs: () => 0,
+          nowMs: () => Date.now(),
         },
       });
 
@@ -267,7 +268,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         JSON.stringify({
           [alreadyIsolatedKey]: {
             sessionId: "sid",
-            updatedAt: 1,
+            updatedAt: Date.now(),
             lastChannel: "whatsapp",
             lastProvider: "whatsapp",
             lastTo: "+1555",
@@ -284,7 +285,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         sessionKey: alreadyIsolatedKey,
         deps: {
           getQueueSize: () => 0,
-          nowMs: () => 0,
+          nowMs: () => Date.now(),
         },
       });
 
@@ -302,7 +303,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         JSON.stringify({
           [isolatedSessionKey]: {
             sessionId: "sid",
-            updatedAt: 1,
+            updatedAt: Date.now(),
             lastChannel: "whatsapp",
             lastProvider: "whatsapp",
             lastTo: "+1555",
@@ -321,7 +322,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         reason: "hook:wake",
         deps: {
           getQueueSize: () => 0,
-          nowMs: () => 0,
+          nowMs: () => Date.now(),
         },
       });
 
@@ -364,7 +365,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         JSON.stringify({
           [isolatedSessionKey]: {
             sessionId: "sid",
-            updatedAt: 1,
+            updatedAt: Date.now(),
             lastChannel: "whatsapp",
             lastProvider: "whatsapp",
             lastTo: "+1555",
@@ -382,7 +383,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         sessionKey: isolatedSessionKey,
         deps: {
           getQueueSize: () => 0,
-          nowMs: () => 0,
+          nowMs: () => Date.now(),
         },
       });
 
@@ -423,7 +424,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         JSON.stringify({
           [baseSessionKey]: {
             sessionId: "sid",
-            updatedAt: 1,
+            updatedAt: Date.now(),
             lastChannel: "whatsapp",
             lastProvider: "whatsapp",
             lastTo: "+1555",
@@ -472,7 +473,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         JSON.stringify({
           [legacyIsolatedKey]: {
             sessionId: "sid",
-            updatedAt: 1,
+            updatedAt: Date.now(),
             lastChannel: "whatsapp",
             lastProvider: "whatsapp",
             lastTo: "+1555",
@@ -488,7 +489,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         sessionKey: legacyIsolatedKey,
         deps: {
           getQueueSize: () => 0,
-          nowMs: () => 0,
+          nowMs: () => Date.now(),
         },
       });
 

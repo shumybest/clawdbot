@@ -5,7 +5,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import "./subagent-registry.mocks.shared.js";
 import {
   clearSessionStoreCacheForTest,
-  drainSessionStoreLockQueuesForTest,
+  drainSessionStoreWriterQueuesForTest,
 } from "../config/sessions/store.js";
 import { captureEnv } from "../test-utils/env.js";
 import {
@@ -79,6 +79,7 @@ describe("subagent registry persistence resume", () => {
     sessionKey: string;
     sessionId?: string;
     updatedAt?: number;
+    abortedLastRun?: boolean;
   }) => {
     if (!tempStateDir) {
       throw new Error("tempStateDir not initialized");
@@ -89,14 +90,9 @@ describe("subagent registry persistence resume", () => {
       sessionKey: params.sessionKey,
       sessionId: params.sessionId,
       updatedAt: params.updatedAt,
+      abortedLastRun: params.abortedLastRun,
       defaultSessionId: `sess-${Date.now()}`,
     });
-  };
-
-  const flushQueuedRegistryWork = async () => {
-    await Promise.resolve();
-    await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 25));
   };
 
   beforeAll(async () => {
@@ -129,7 +125,7 @@ describe("subagent registry persistence resume", () => {
     announceSpy.mockClear();
     mod.__testing.setDepsForTest();
     mod.resetSubagentRegistryForTests({ persist: false });
-    await drainSessionStoreLockQueuesForTest();
+    await drainSessionStoreWriterQueuesForTest();
     clearSessionStoreCacheForTest();
     if (tempStateDir) {
       await fs.rm(tempStateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -182,17 +178,16 @@ describe("subagent registry persistence resume", () => {
           requesterOrigin?: { channel?: string; accountId?: string };
         }
       | undefined;
-    expect(run).toBeDefined();
-    if (run) {
-      expect("requesterAccountId" in run).toBe(false);
-      expect("requesterChannel" in run).toBe(false);
+    if (run === undefined) {
+      throw new Error("expected persisted run");
     }
-    expect(run?.requesterOrigin?.channel).toBe("whatsapp");
+    expect("requesterAccountId" in run).toBe(false);
+    expect("requesterChannel" in run).toBe(false);
+    expect(run.requesterOrigin?.channel).toBe("whatsapp");
     expect(run?.requesterOrigin?.accountId).toBe("acct-main");
 
     mod.initSubagentRegistry();
 
-    await flushQueuedRegistryWork();
     await vi.waitFor(() => expect(announceSpy).toHaveBeenCalled(), {
       timeout: 1_000,
       interval: 10,

@@ -1,12 +1,10 @@
-import { loadConfig } from "../config/config.js";
-import { info } from "../globals.js";
+import { formatCliCommand } from "../cli/command-format.js";
+import { getRuntimeConfig } from "../config/config.js";
+import { resolveCronStorePath } from "../cron/store.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
-import {
-  cancelTaskById,
-  getTaskById,
-  updateTaskNotifyPolicyById,
-} from "../tasks/runtime-internal.js";
+import { getTaskById, updateTaskNotifyPolicyById } from "../tasks/runtime-internal.js";
+import { cancelDetachedTaskRunById } from "../tasks/task-executor.js";
 import {
   listTaskFlowAuditFindings,
   summarizeTaskFlowAuditFindings,
@@ -25,9 +23,11 @@ import {
   type TaskAuditCode,
   type TaskAuditSeverity,
 } from "../tasks/task-registry.audit.js";
+import { compareTaskAuditFindingSortKeys } from "../tasks/task-registry.audit.shared.js";
 import {
   getInspectableTaskAuditSummary,
   getInspectableTaskRegistrySummary,
+  configureTaskRegistryMaintenance,
   previewTaskRegistryMaintenance,
   runTaskRegistryMaintenance,
 } from "../tasks/task-registry.maintenance.js";
@@ -44,6 +44,23 @@ const STATUS_PAD = 10;
 const DELIVERY_PAD = 14;
 const ID_PAD = 10;
 const RUN_PAD = 10;
+
+const info = theme.info;
+
+function formatTaskLookupMiss(lookup: string): string {
+  return `Task not found: ${lookup}. Run ${formatCliCommand("openclaw tasks list")} to see recent task ids.`;
+}
+
+async function loadTaskCancelConfig() {
+  return getRuntimeConfig();
+}
+
+function configureTaskMaintenanceFromConfig(): void {
+  const cfg = getRuntimeConfig();
+  configureTaskRegistryMaintenance({
+    cronStorePath: resolveCronStorePath(cfg.cron?.store),
+  });
+}
 
 function truncate(value: string, maxChars: number) {
   if (value.length <= maxChars) {
@@ -154,19 +171,18 @@ type TaskSystemAuditFinding = {
 };
 
 function compareSystemAuditFindings(left: TaskSystemAuditFinding, right: TaskSystemAuditFinding) {
-  const severityRank = (severity: TaskSystemAuditSeverity) => (severity === "error" ? 0 : 1);
-  const severityDiff = severityRank(left.severity) - severityRank(right.severity);
-  if (severityDiff !== 0) {
-    return severityDiff;
-  }
-  const leftAge = left.ageMs ?? -1;
-  const rightAge = right.ageMs ?? -1;
-  if (leftAge !== rightAge) {
-    return rightAge - leftAge;
-  }
-  const leftCreatedAt = left.task?.createdAt ?? left.flow?.createdAt ?? 0;
-  const rightCreatedAt = right.task?.createdAt ?? right.flow?.createdAt ?? 0;
-  return leftCreatedAt - rightCreatedAt;
+  return compareTaskAuditFindingSortKeys(
+    {
+      severity: left.severity,
+      ageMs: left.ageMs,
+      createdAt: left.task?.createdAt ?? left.flow?.createdAt ?? 0,
+    },
+    {
+      severity: right.severity,
+      ageMs: right.ageMs,
+      createdAt: right.task?.createdAt ?? right.flow?.createdAt ?? 0,
+    },
+  );
 }
 
 function formatAuditRows(findings: TaskSystemAuditFinding[], rich: boolean) {
@@ -210,7 +226,7 @@ function toSystemAuditFindings(params: {
   severityFilter?: TaskSystemAuditSeverity;
   codeFilter?: TaskSystemAuditCode;
 }) {
-  const taskFindings = listTaskAuditFindings();
+  const taskFindings = listTaskAuditFindings({ tasks: reconcileInspectableTasks() });
   const flowFindings = listTaskFlowAuditFindings();
   const allFindings: TaskSystemAuditFinding[] = [
     ...taskFindings.map((finding) => ({
@@ -302,7 +318,9 @@ export async function tasksListCommand(
     runtime.log(info(`Status filter: ${statusFilter}`));
   }
   if (tasks.length === 0) {
-    runtime.log("No background tasks found.");
+    runtime.log(
+      `No background tasks found. Run ${formatCliCommand("openclaw tasks audit")} to check for stale task state.`,
+    );
     return;
   }
   const rich = isRich();
@@ -317,7 +335,7 @@ export async function tasksShowCommand(
 ) {
   const task = reconcileTaskLookupToken(opts.lookup);
   if (!task) {
-    runtime.error(`Task not found: ${opts.lookup}`);
+    runtime.error(formatTaskLookupMiss(opts.lookup));
     runtime.exit(1);
     return;
   }
@@ -363,7 +381,7 @@ export async function tasksNotifyCommand(
 ) {
   const task = reconcileTaskLookupToken(opts.lookup);
   if (!task) {
-    runtime.error(`Task not found: ${opts.lookup}`);
+    runtime.error(formatTaskLookupMiss(opts.lookup));
     runtime.exit(1);
     return;
   }
@@ -372,7 +390,7 @@ export async function tasksNotifyCommand(
     notifyPolicy: opts.notify,
   });
   if (!updated) {
-    runtime.error(`Task not found: ${opts.lookup}`);
+    runtime.error(formatTaskLookupMiss(opts.lookup));
     runtime.exit(1);
     return;
   }
@@ -382,16 +400,16 @@ export async function tasksNotifyCommand(
 export async function tasksCancelCommand(opts: { lookup: string }, runtime: RuntimeEnv) {
   const task = reconcileTaskLookupToken(opts.lookup);
   if (!task) {
-    runtime.error(`Task not found: ${opts.lookup}`);
+    runtime.error(formatTaskLookupMiss(opts.lookup));
     runtime.exit(1);
     return;
   }
-  const result = await cancelTaskById({
-    cfg: loadConfig(),
+  const result = await cancelDetachedTaskRunById({
+    cfg: await loadTaskCancelConfig(),
     taskId: task.taskId,
   });
   if (!result.found) {
-    runtime.error(result.reason ?? `Task not found: ${opts.lookup}`);
+    runtime.error(result.reason ?? formatTaskLookupMiss(opts.lookup));
     runtime.exit(1);
     return;
   }
@@ -415,6 +433,7 @@ export async function tasksAuditCommand(
   },
   runtime: RuntimeEnv,
 ) {
+  configureTaskMaintenanceFromConfig();
   const severityFilter = opts.severity?.trim() as TaskSystemAuditSeverity | undefined;
   const codeFilter = opts.code?.trim() as TaskSystemAuditCode | undefined;
   const { allFindings, filteredFindings, taskFindings, summary } = toSystemAuditFindings({
@@ -489,6 +508,7 @@ export async function tasksMaintenanceCommand(
   opts: { json?: boolean; apply?: boolean },
   runtime: RuntimeEnv,
 ) {
+  configureTaskMaintenanceFromConfig();
   const auditBefore = getInspectableTaskAuditSummary();
   const flowAuditBefore = getInspectableTaskFlowAuditSummary();
   const taskMaintenance = opts.apply
@@ -529,7 +549,7 @@ export async function tasksMaintenanceCommand(
 
   runtime.log(
     info(
-      `Tasks maintenance (${opts.apply ? "applied" : "preview"}): tasks ${taskMaintenance.reconciled} reconcile · ${taskMaintenance.cleanupStamped} cleanup stamp · ${taskMaintenance.pruned} prune; task-flows ${flowMaintenance.reconciled} reconcile · ${flowMaintenance.pruned} prune`,
+      `Tasks maintenance (${opts.apply ? "applied" : "preview"}): tasks ${taskMaintenance.reconciled} reconcile · ${taskMaintenance.recovered} recovered · ${taskMaintenance.cleanupStamped} cleanup stamp · ${taskMaintenance.pruned} prune; task-flows ${flowMaintenance.reconciled} reconcile · ${flowMaintenance.pruned} prune`,
     ),
   );
   runtime.log(

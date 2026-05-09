@@ -41,8 +41,16 @@ async function captureProviderEntry(params: {
 }) {
   const captured = capturePluginRegistration(params.entry);
   const provider = captured.providers[0];
+  const modelCatalogProvider = captured.modelCatalogProviders[0];
   const catalog = await provider?.catalog?.run(createCatalogContext(params.config));
-  return { captured, provider, catalog };
+  const staticCatalog = await provider?.staticCatalog?.run(createCatalogContext(params.config));
+  const unifiedCatalog = await modelCatalogProvider?.liveCatalog?.(
+    createCatalogContext(params.config),
+  );
+  const unifiedStaticCatalog = await modelCatalogProvider?.staticCatalog?.(
+    createCatalogContext(params.config),
+  );
+  return { captured, provider, catalog, staticCatalog, unifiedCatalog, unifiedStaticCatalog };
 }
 
 describe("defineSingleProviderPluginEntry", () => {
@@ -72,12 +80,19 @@ describe("defineSingleProviderPluginEntry", () => {
             baseUrl: "https://api.demo.test/v1",
             models: [createModel("default", "Default")],
           }),
+          buildStaticProvider: () => ({
+            api: "openai-completions",
+            baseUrl: "https://api.demo.test/v1",
+            models: [createModel("default", "Default")],
+          }),
         },
       },
     });
 
-    const { captured, provider, catalog } = await captureProviderEntry({ entry });
+    const { captured, provider, catalog, staticCatalog, unifiedCatalog, unifiedStaticCatalog } =
+      await captureProviderEntry({ entry });
     expect(captured.providers).toHaveLength(1);
+    expect(captured.modelCatalogProviders).toHaveLength(1);
     expect(provider).toMatchObject({
       id: "demo",
       label: "Demo",
@@ -107,6 +122,31 @@ describe("defineSingleProviderPluginEntry", () => {
         models: [createModel("default", "Default")],
       },
     });
+    expect(staticCatalog).toEqual({
+      provider: {
+        api: "openai-completions",
+        baseUrl: "https://api.demo.test/v1",
+        models: [createModel("default", "Default")],
+      },
+    });
+    expect(unifiedCatalog).toEqual([
+      {
+        kind: "text",
+        provider: "demo",
+        model: "default",
+        label: "Default",
+        source: "live",
+      },
+    ]);
+    expect(unifiedStaticCatalog).toEqual([
+      {
+        kind: "text",
+        provider: "demo",
+        model: "default",
+        label: "Default",
+        source: "static",
+      },
+    ]);
   });
 
   it("supports provider overrides, explicit env vars, and extra registration", async () => {
@@ -181,6 +221,7 @@ describe("defineSingleProviderPluginEntry", () => {
       },
     });
     expect(captured.providers).toHaveLength(1);
+    expect(captured.modelCatalogProviders).toHaveLength(1);
     expect(captured.webSearchProviders).toHaveLength(1);
 
     expect(provider).toMatchObject({

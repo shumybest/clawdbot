@@ -10,18 +10,11 @@ import {
   type ChannelSetupWizard,
   type DmPolicy,
   type OpenClawConfig,
+  type SecretInput,
 } from "openclaw/plugin-sdk/setup";
-import { inspectFeishuCredentials, resolveDefaultFeishuAccountId } from "./accounts.js";
-import {
-  beginAppRegistration,
-  getAppOwnerOpenId,
-  initAppRegistration,
-  pollAppRegistration,
-  printQrCode,
-  type AppRegistrationResult,
-} from "./app-registration.js";
-import { probeFeishu } from "./probe.js";
-import type { FeishuDomain } from "./types.js";
+import { resolveDefaultFeishuAccountId, resolveFeishuAccount } from "./accounts.js";
+import type { AppRegistrationResult } from "./app-registration.js";
+import type { FeishuConfig, FeishuDomain } from "./types.js";
 
 const channel = "feishu" as const;
 
@@ -38,7 +31,7 @@ function normalizeString(value: unknown): string | undefined {
 }
 
 function isFeishuConfigured(cfg: OpenClawConfig): boolean {
-  const feishuCfg = cfg.channels?.feishu;
+  const feishuCfg = cfg.channels?.feishu as FeishuConfig | undefined;
 
   const isAppIdConfigured = (value: unknown): boolean => {
     const asString = normalizeString(value);
@@ -88,7 +81,7 @@ function patchFeishuConfig(
   accountId: string,
   patch: Record<string, unknown>,
 ): OpenClawConfig {
-  const feishuCfg = cfg.channels?.feishu;
+  const feishuCfg = cfg.channels?.feishu as FeishuConfig | undefined;
   if (accountId === DEFAULT_ACCOUNT_ID) {
     return patchTopLevelChannelConfigSection({
       cfg,
@@ -120,7 +113,7 @@ async function promptFeishuAllowFrom(params: {
   accountId?: string;
   prompter: Parameters<NonNullable<ChannelSetupDmPolicy["promptAllowFrom"]>>[0]["prompter"];
 }): Promise<OpenClawConfig> {
-  const feishuCfg = params.cfg.channels?.feishu;
+  const feishuCfg = params.cfg.channels?.feishu as FeishuConfig | undefined;
   const resolvedAccountId = params.accountId ?? resolveDefaultFeishuAccountId(params.cfg);
   const account =
     resolvedAccountId !== DEFAULT_ACCOUNT_ID
@@ -197,7 +190,7 @@ const feishuDmPolicy: ChannelSetupDmPolicy = {
         };
   },
   getCurrent: (cfg, accountId) => {
-    const feishuCfg = cfg.channels?.feishu;
+    const feishuCfg = cfg.channels?.feishu as FeishuConfig | undefined;
     const resolvedAccountId = accountId ?? resolveDefaultFeishuAccountId(cfg);
     if (resolvedAccountId !== DEFAULT_ACCOUNT_ID) {
       const account = feishuCfg?.accounts?.[resolvedAccountId] as
@@ -207,7 +200,7 @@ const feishuDmPolicy: ChannelSetupDmPolicy = {
         return account.dmPolicy as DmPolicy;
       }
     }
-    return feishuCfg?.dmPolicy ?? "pairing";
+    return (feishuCfg?.dmPolicy as DmPolicy | undefined) ?? "pairing";
   },
   setPolicy: (cfg, policy, accountId) => {
     const resolvedAccountId = accountId ?? resolveDefaultFeishuAccountId(cfg);
@@ -253,6 +246,8 @@ function applyNewAppSecurityPolicy(
 // ---------------------------------------------------------------------------
 
 async function runScanToCreate(prompter: WizardPrompter): Promise<AppRegistrationResult | null> {
+  const { beginAppRegistration, initAppRegistration, pollAppRegistration, printQrCode } =
+    await import("./app-registration.js");
   try {
     await initAppRegistration("feishu");
   } catch {
@@ -313,17 +308,23 @@ async function runNewAppFlow(params: {
   // Resolve target account: defaultAccount > first account key > top-level.
   const targetAccountId = resolveDefaultFeishuAccountId(next);
 
-  const scanResult = await runScanToCreate(prompter);
-
   // ----- QR scan flow -----
-  let appId: string | null = scanResult?.appId ?? null;
-  let appSecret: unknown = scanResult?.appSecret ?? null;
-  let appSecretProbeValue: string | null = scanResult?.appSecret ?? null;
-  let scanDomain: FeishuDomain | undefined = scanResult?.domain;
-  let scanOpenId: string | undefined = scanResult?.openId;
-  if (!scanResult) {
+  let appId: string | null = null;
+  let appSecret: SecretInput | null = null;
+  let appSecretProbeValue: string | null = null;
+  let scanDomain: FeishuDomain | undefined;
+  let scanOpenId: string | undefined;
+
+  const scanResult = await runScanToCreate(prompter);
+  if (scanResult) {
+    appId = scanResult.appId;
+    appSecret = scanResult.appSecret;
+    appSecretProbeValue = scanResult.appSecret;
+    scanDomain = scanResult.domain;
+    scanOpenId = scanResult.openId;
+  } else {
     // Fallback to manual input: collect domain, appId, appSecret.
-    const feishuCfg = next.channels?.feishu;
+    const feishuCfg = next.channels?.feishu as FeishuConfig | undefined;
     await noteFeishuCredentialHelp(prompter);
 
     // Domain selection first (needed for API calls).
@@ -364,6 +365,7 @@ async function runNewAppFlow(params: {
 
     // Fetch openId via API for manual flow.
     if (appId && appSecretProbeValue) {
+      const { getAppOwnerOpenId } = await import("./app-registration.js");
       scanOpenId = await getAppOwnerOpenId({
         appId,
         appSecret: appSecretProbeValue,
@@ -416,7 +418,7 @@ async function runEditFlow(params: {
 }): Promise<{ cfg: OpenClawConfig } | null> {
   const { prompter, options } = params;
   const next = params.cfg;
-  const feishuCfg = next.channels?.feishu;
+  const feishuCfg = next.channels?.feishu as FeishuConfig | undefined;
 
   // Check existing appId (top-level or first configured account).
   // Supports both plain string and SecretRef (env-backed) appId values.
@@ -496,8 +498,6 @@ export async function runFeishuLogin(params: {
 // Exported wizard
 // ---------------------------------------------------------------------------
 
-export { feishuSetupAdapter } from "./setup-core.js";
-
 export const feishuSetupWizard: ChannelSetupWizard = {
   channel,
   resolveAccountIdForConfigure: ({ accountOverride, defaultAccountId, cfg }) =>
@@ -515,13 +515,13 @@ export const feishuSetupWizard: ChannelSetupWizard = {
     configuredScore: 2,
     unconfiguredScore: 0,
     resolveConfigured: ({ cfg }) => isFeishuConfigured(cfg),
-    resolveStatusLines: async ({ cfg, configured }) => {
-      const feishuCfg = cfg.channels?.feishu;
-      const resolvedCredentials = inspectFeishuCredentials(feishuCfg);
+    resolveStatusLines: async ({ cfg, accountId, configured }) => {
+      const account = resolveFeishuAccount({ cfg, accountId });
       let probeResult = null;
-      if (configured && resolvedCredentials) {
+      if (configured && account.configured) {
         try {
-          probeResult = await probeFeishu(resolvedCredentials);
+          const { probeFeishu } = await import("./probe.js");
+          probeResult = await probeFeishu(account);
         } catch {}
       }
       if (!configured) {

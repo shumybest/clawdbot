@@ -1,10 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import {
   collectAttackSurfaceSummaryFindings,
   collectSmallModelRiskFindings,
 } from "./audit-extra.summary.js";
 import { safeEqualSecret } from "./secret-equal.js";
+
+vi.mock("../plugins/web-search-credential-presence.js", () => ({
+  hasConfiguredWebSearchCredential: () => false,
+}));
+
+function requireFirstFinding<T>(findings: readonly T[], label: string): T {
+  const [finding] = findings;
+  if (!finding) {
+    throw new Error(`Expected ${label} finding`);
+  }
+  return finding;
+}
 
 describe("collectAttackSurfaceSummaryFindings", () => {
   it.each([
@@ -23,9 +35,9 @@ describe("collectAttackSurfaceSummaryFindings", () => {
       expectedDetail: ["hooks.webhooks: enabled", "hooks.internal: enabled"],
     },
     {
-      name: "reports internal hooks as enabled by default and webhooks as disabled when neither is configured",
+      name: "reports internal hooks as disabled until configured",
       cfg: {} satisfies OpenClawConfig,
-      expectedDetail: ["hooks.webhooks: disabled", "hooks.internal: enabled"],
+      expectedDetail: ["hooks.webhooks: disabled", "hooks.internal: disabled"],
     },
     {
       name: "reports internal hooks as disabled when explicitly set to false",
@@ -35,7 +47,10 @@ describe("collectAttackSurfaceSummaryFindings", () => {
       expectedDetail: ["hooks.internal: disabled"],
     },
   ])("$name", ({ cfg, expectedDetail }) => {
-    const [finding] = collectAttackSurfaceSummaryFindings(cfg);
+    const finding = requireFirstFinding(
+      collectAttackSurfaceSummaryFindings(cfg),
+      "attack surface summary",
+    );
     expect(finding.checkId).toBe("summary.attack_surface");
     for (const snippet of expectedDetail) {
       expect(finding.detail).toContain(snippet);
@@ -48,6 +63,8 @@ describe("safeEqualSecret", () => {
     ["secret-token", "secret-token", true],
     ["secret-token", "secret-tokEn", false],
     ["short", "much-longer", false],
+    ["", "", true],
+    ["", "secret", false],
     [undefined, "secret", false],
     ["secret", undefined, false],
     [null, "secret", false],
@@ -83,19 +100,22 @@ describe("collectSmallModelRiskFindings", () => {
       detailExcludes: ["No web/browser tools detected"],
     },
   ])("$name", ({ cfg, env, detailIncludes, detailExcludes }) => {
-    const [finding] = collectSmallModelRiskFindings({
-      cfg,
-      env,
-    });
+    const finding = requireFirstFinding(
+      collectSmallModelRiskFindings({
+        cfg,
+        env,
+      }),
+      "small model risk",
+    );
 
-    expect(finding?.checkId).toBe("models.small_params");
-    expect(finding?.severity).toBe("critical");
-    expect(finding?.detail).toContain("ollama/mistral-8b");
+    expect(finding.checkId).toBe("models.small_params");
+    expect(finding.severity).toBe("critical");
+    expect(finding.detail).toContain("ollama/mistral-8b");
     for (const snippet of detailIncludes) {
-      expect(finding?.detail).toContain(snippet);
+      expect(finding.detail).toContain(snippet);
     }
     for (const snippet of detailExcludes) {
-      expect(finding?.detail).not.toContain(snippet);
+      expect(finding.detail).not.toContain(snippet);
     }
   });
 });

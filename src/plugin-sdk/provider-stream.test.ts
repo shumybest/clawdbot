@@ -1,8 +1,23 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import { describe, expect, it } from "vitest";
+import { VERSION } from "../version.js";
+import {
+  composeProviderStreamWrappers as composeProviderStreamWrappersShared,
+  createMoonshotThinkingWrapper as createMoonshotThinkingWrapperShared,
+  createToolStreamWrapper as createToolStreamWrapperShared,
+} from "./provider-stream-shared.js";
 import {
   buildProviderStreamFamilyHooks,
   composeProviderStreamWrappers,
+  createMoonshotThinkingWrapper,
+  createToolStreamWrapper,
+  GOOGLE_THINKING_STREAM_HOOKS,
+  KILOCODE_THINKING_STREAM_HOOKS,
+  MINIMAX_FAST_MODE_STREAM_HOOKS,
+  MOONSHOT_THINKING_STREAM_HOOKS,
+  OPENAI_RESPONSES_STREAM_HOOKS,
+  OPENROUTER_THINKING_STREAM_HOOKS,
+  TOOL_STREAM_DEFAULT_ON_HOOKS,
 } from "./provider-stream.js";
 
 function requireWrapStreamFn(
@@ -24,7 +39,16 @@ function requireStreamFn(streamFn: StreamFn | null | undefined) {
 }
 
 describe("composeProviderStreamWrappers", () => {
-  it("applies wrappers left to right", async () => {
+  it("re-exports the shared wrapper composer", () => {
+    expect(composeProviderStreamWrappers).toBe(composeProviderStreamWrappersShared);
+  });
+
+  it("re-exports shared helper wrappers", () => {
+    expect(createMoonshotThinkingWrapper).toBe(createMoonshotThinkingWrapperShared);
+    expect(createToolStreamWrapper).toBe(createToolStreamWrapperShared);
+  });
+
+  it("applies wrappers left to right", () => {
     const order: string[] = [];
     const baseStreamFn: StreamFn = (_model, _context, _options) => {
       order.push("base");
@@ -41,10 +65,11 @@ describe("composeProviderStreamWrappers", () => {
         return result;
       };
 
-    const composed = composeProviderStreamWrappers(baseStreamFn, wrap("a"), undefined, wrap("b"));
+    const composed = requireStreamFn(
+      composeProviderStreamWrappers(baseStreamFn, wrap("a"), undefined, wrap("b")),
+    );
 
-    expect(typeof composed).toBe("function");
-    void composed?.({} as never, {} as never, {});
+    void composed({} as never, {} as never, {});
 
     expect(order).toEqual(["b:before", "a:before", "base", "a:after", "b:after"]);
   });
@@ -60,20 +85,23 @@ describe("buildProviderStreamFamilyHooks", () => {
     let capturedPayload: Record<string, unknown> | undefined;
     let capturedModelId: string | undefined;
     let capturedHeaders: Record<string, string> | undefined;
+    let payloadSeed: Record<string, unknown> | undefined;
 
     const baseStreamFn: StreamFn = (model, _context, options) => {
       capturedModelId = model.id;
-      const payload = { config: { thinkingConfig: { thinkingBudget: -1 } } } as Record<
-        string,
-        unknown
-      >;
+      const payload = {
+        model: model.id,
+        config: { thinkingConfig: { thinkingBudget: -1 } },
+        ...payloadSeed,
+      } as Record<string, unknown>;
+      payloadSeed = undefined;
       options?.onPayload?.(payload as never, model as never);
       capturedPayload = payload;
       capturedHeaders = options?.headers;
       return {} as never;
     };
 
-    const googleHooks = buildProviderStreamFamilyHooks("google-thinking");
+    const googleHooks = GOOGLE_THINKING_STREAM_HOOKS;
     const googleStream = requireStreamFn(
       requireWrapStreamFn(googleHooks.wrapStreamFn)({
         streamFn: baseStreamFn,
@@ -93,7 +121,7 @@ describe("buildProviderStreamFamilyHooks", () => {
     ).thinkingConfig as Record<string, unknown>;
     expect(googleThinkingConfig).not.toHaveProperty("thinkingBudget");
 
-    const minimaxHooks = buildProviderStreamFamilyHooks("minimax-fast-mode");
+    const minimaxHooks = MINIMAX_FAST_MODE_STREAM_HOOKS;
     const minimaxStream = requireStreamFn(
       requireWrapStreamFn(minimaxHooks.wrapStreamFn)({
         streamFn: baseStreamFn,
@@ -111,7 +139,7 @@ describe("buildProviderStreamFamilyHooks", () => {
     );
     expect(capturedModelId).toBe("MiniMax-M2.7-highspeed");
 
-    const kilocodeHooks = buildProviderStreamFamilyHooks("kilocode-thinking");
+    const kilocodeHooks = KILOCODE_THINKING_STREAM_HOOKS;
     void requireStreamFn(
       requireWrapStreamFn(kilocodeHooks.wrapStreamFn)({
         streamFn: baseStreamFn,
@@ -136,7 +164,7 @@ describe("buildProviderStreamFamilyHooks", () => {
     });
     expect(capturedPayload).not.toHaveProperty("reasoning");
 
-    const moonshotHooks = buildProviderStreamFamilyHooks("moonshot-thinking");
+    const moonshotHooks = MOONSHOT_THINKING_STREAM_HOOKS;
     const moonshotStream = requireStreamFn(
       requireWrapStreamFn(moonshotHooks.wrapStreamFn)({
         streamFn: baseStreamFn,
@@ -149,7 +177,48 @@ describe("buildProviderStreamFamilyHooks", () => {
       thinking: { type: "disabled" },
     });
 
-    const openAiHooks = buildProviderStreamFamilyHooks("openai-responses-defaults");
+    const moonshotKeepStream = requireStreamFn(
+      requireWrapStreamFn(moonshotHooks.wrapStreamFn)({
+        streamFn: baseStreamFn,
+        thinkingLevel: "low",
+        extraParams: { thinking: { type: "enabled", keep: "all" } },
+      } as never),
+    );
+    await moonshotKeepStream(
+      { api: "openai-completions", id: "kimi-k2.6" } as never,
+      {} as never,
+      {},
+    );
+    expect(capturedPayload).toMatchObject({
+      config: { thinkingConfig: { thinkingBudget: -1 } },
+      thinking: { type: "enabled", keep: "all" },
+    });
+
+    await moonshotKeepStream(
+      { api: "openai-completions", id: "kimi-k2.5" } as never,
+      {} as never,
+      {},
+    );
+    expect(capturedPayload).toMatchObject({
+      config: { thinkingConfig: { thinkingBudget: -1 } },
+      thinking: { type: "enabled" },
+    });
+    expect((capturedPayload?.thinking as Record<string, unknown>) ?? {}).not.toHaveProperty("keep");
+
+    payloadSeed = { tool_choice: { type: "tool", name: "read" } };
+    await moonshotKeepStream(
+      { api: "openai-completions", id: "kimi-k2.6" } as never,
+      {} as never,
+      {},
+    );
+    expect(capturedPayload).toMatchObject({
+      config: { thinkingConfig: { thinkingBudget: -1 } },
+      tool_choice: { type: "tool", name: "read" },
+      thinking: { type: "disabled" },
+    });
+    expect((capturedPayload?.thinking as Record<string, unknown>) ?? {}).not.toHaveProperty("keep");
+
+    const openAiHooks = OPENAI_RESPONSES_STREAM_HOOKS;
     void requireStreamFn(
       requireWrapStreamFn(openAiHooks.wrapStreamFn)({
         streamFn: baseStreamFn,
@@ -171,9 +240,13 @@ describe("buildProviderStreamFamilyHooks", () => {
       config: { thinkingConfig: { thinkingBudget: -1 } },
       service_tier: "flex",
     });
-    expect(capturedHeaders).toBeDefined();
+    expect(capturedHeaders).toEqual({
+      "User-Agent": `openclaw/${VERSION}`,
+      originator: "openclaw",
+      version: VERSION,
+    });
 
-    const openRouterHooks = buildProviderStreamFamilyHooks("openrouter-thinking");
+    const openRouterHooks = OPENROUTER_THINKING_STREAM_HOOKS;
     void requireStreamFn(
       requireWrapStreamFn(openRouterHooks.wrapStreamFn)({
         streamFn: baseStreamFn,
@@ -198,7 +271,7 @@ describe("buildProviderStreamFamilyHooks", () => {
     });
     expect(capturedPayload).not.toHaveProperty("reasoning");
 
-    const toolStreamHooks = buildProviderStreamFamilyHooks("tool-stream-default-on");
+    const toolStreamHooks = TOOL_STREAM_DEFAULT_ON_HOOKS;
     const toolStreamDefault = requireStreamFn(
       requireWrapStreamFn(toolStreamHooks.wrapStreamFn)({
         streamFn: baseStreamFn,
@@ -222,5 +295,15 @@ describe("buildProviderStreamFamilyHooks", () => {
       config: { thinkingConfig: { thinkingBudget: -1 } },
     });
     expect(capturedPayload).not.toHaveProperty("tool_stream");
+  });
+
+  it("exposes canonical stream hook constants for reused families", () => {
+    expect(GOOGLE_THINKING_STREAM_HOOKS.wrapStreamFn).toBeTypeOf("function");
+    expect(KILOCODE_THINKING_STREAM_HOOKS.wrapStreamFn).toBeTypeOf("function");
+    expect(MINIMAX_FAST_MODE_STREAM_HOOKS.wrapStreamFn).toBeTypeOf("function");
+    expect(MOONSHOT_THINKING_STREAM_HOOKS.wrapStreamFn).toBeTypeOf("function");
+    expect(OPENAI_RESPONSES_STREAM_HOOKS.wrapStreamFn).toBeTypeOf("function");
+    expect(OPENROUTER_THINKING_STREAM_HOOKS.wrapStreamFn).toBeTypeOf("function");
+    expect(TOOL_STREAM_DEFAULT_ON_HOOKS.wrapStreamFn).toBeTypeOf("function");
   });
 });

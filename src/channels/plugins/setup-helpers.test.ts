@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../plugins/runtime.js";
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "../../routing/session-key.js";
@@ -8,7 +8,6 @@ import {
 } from "../../test-utils/channel-plugins.js";
 import {
   applySetupAccountConfigPatch,
-  clearSetupPromotionRuntimeModuleCache,
   createEnvPatchedAccountSetupAdapter,
   createPatchedAccountSetupAdapter,
   moveSingleAccountChannelSectionToDefaultAccount,
@@ -35,6 +34,16 @@ const matrixNamedAccountPromotionKeys = [
 ] as const;
 const telegramSingleAccountKeysToMove = ["streaming"] as const;
 
+function collectNamedAccountIds(accounts: Record<string, unknown>): string[] {
+  const ids: string[] = [];
+  for (const accountId of Object.keys(accounts)) {
+    if (accountId) {
+      ids.push(accountId);
+    }
+  }
+  return ids;
+}
+
 function resolveMatrixSingleAccountPromotionTarget(params: {
   channel: { defaultAccount?: string; accounts?: Record<string, unknown> };
 }): string {
@@ -49,11 +58,12 @@ function resolveMatrixSingleAccountPromotionTarget(params: {
       ) ?? DEFAULT_ACCOUNT_ID
     );
   }
-  const namedAccounts = Object.keys(accounts).filter(Boolean);
+  const namedAccounts = collectNamedAccountIds(accounts);
   return namedAccounts.length === 1 ? namedAccounts[0] : DEFAULT_ACCOUNT_ID;
 }
 
-beforeAll(() => {
+beforeEach(() => {
+  resetPluginRuntimeStateForTest();
   setActivePluginRegistry(
     createTestRegistry([
       {
@@ -83,7 +93,6 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  clearSetupPromotionRuntimeModuleCache();
   resetPluginRuntimeStateForTest();
 });
 

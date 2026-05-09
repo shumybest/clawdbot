@@ -41,6 +41,19 @@ describe("CronService interval/cron jobs fire on time", () => {
     );
   };
 
+  const countMainSystemEvents = (
+    enqueueSystemEvent: ReturnType<typeof vi.fn>,
+    expectedText: string,
+  ): number => {
+    let count = 0;
+    for (const [text] of enqueueSystemEvent.mock.calls) {
+      if (text === expectedText) {
+        count++;
+      }
+    }
+    return count;
+  };
+
   it("fires an every-type main job when the timer fires a few ms late", async () => {
     const store = await makeStorePath();
     const { cron, enqueueSystemEvent, finished } = createStartedCronServiceWithFinishedBarrier({
@@ -116,7 +129,7 @@ describe("CronService interval/cron jobs fire on time", () => {
   it("keeps legacy every jobs due while minute cron jobs recompute schedules", async () => {
     const store = await makeStorePath();
     const enqueueSystemEvent = vi.fn();
-    const requestHeartbeatNow = vi.fn();
+    const requestHeartbeat = vi.fn();
     const nowMs = Date.parse("2025-12-13T00:00:00.000Z");
 
     await writeCronStoreSnapshot({
@@ -154,7 +167,7 @@ describe("CronService interval/cron jobs fire on time", () => {
       cronEnabled: true,
       log: noopLogger,
       enqueueSystemEvent,
-      requestHeartbeatNow,
+      requestHeartbeat,
       runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
     });
 
@@ -171,10 +184,8 @@ describe("CronService interval/cron jobs fire on time", () => {
     const sfRun = await cron.run("legacy-every", "due");
     expect(sfRun).toEqual({ ok: true, ran: true });
 
-    const sfRuns = enqueueSystemEvent.mock.calls.filter((args) => args[0] === "sf-tick").length;
-    const minuteRuns = enqueueSystemEvent.mock.calls.filter(
-      (args) => args[0] === "minute-tick",
-    ).length;
+    const sfRuns = countMainSystemEvents(enqueueSystemEvent, "sf-tick");
+    const minuteRuns = countMainSystemEvents(enqueueSystemEvent, "minute-tick");
     expect(minuteRuns).toBeGreaterThan(0);
     expect(sfRuns).toBeGreaterThan(0);
 
