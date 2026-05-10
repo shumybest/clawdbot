@@ -7,6 +7,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
 import {
   prepareProviderExtraParams as prepareProviderExtraParamsRuntime,
+  resolveProviderExtraParamsForTransport as resolveProviderExtraParamsForTransportRuntime,
   wrapProviderStreamFn as wrapProviderStreamFnRuntime,
 } from "../../plugins/provider-runtime.js";
 import { createGoogleThinkingPayloadWrapper } from "./google-stream-wrappers.js";
@@ -32,6 +33,7 @@ import { streamWithPayloadPatch } from "./stream-payload-utils.js";
 
 const defaultProviderRuntimeDeps = {
   prepareProviderExtraParams: prepareProviderExtraParamsRuntime,
+  resolveProviderExtraParamsForTransport: resolveProviderExtraParamsForTransportRuntime,
   wrapProviderStreamFn: wrapProviderStreamFnRuntime,
 };
 
@@ -45,12 +47,17 @@ export const __testing = {
   ): void {
     providerRuntimeDeps.prepareProviderExtraParams =
       deps?.prepareProviderExtraParams ?? defaultProviderRuntimeDeps.prepareProviderExtraParams;
+    providerRuntimeDeps.resolveProviderExtraParamsForTransport =
+      deps?.resolveProviderExtraParamsForTransport ??
+      defaultProviderRuntimeDeps.resolveProviderExtraParamsForTransport;
     providerRuntimeDeps.wrapProviderStreamFn =
       deps?.wrapProviderStreamFn ?? defaultProviderRuntimeDeps.wrapProviderStreamFn;
   },
   resetProviderRuntimeDepsForTest(): void {
     providerRuntimeDeps.prepareProviderExtraParams =
       defaultProviderRuntimeDeps.prepareProviderExtraParams;
+    providerRuntimeDeps.resolveProviderExtraParamsForTransport =
+      defaultProviderRuntimeDeps.resolveProviderExtraParamsForTransport;
     providerRuntimeDeps.wrapProviderStreamFn = defaultProviderRuntimeDeps.wrapProviderStreamFn;
   },
 };
@@ -134,6 +141,10 @@ export function resolvePreparedExtraParams(params: {
   extraParamsOverride?: Record<string, unknown>;
   thinkingLevel?: ThinkLevel;
   agentId?: string;
+  agentDir?: string;
+  workspaceDir?: string;
+  model?: ProviderRuntimeModel;
+  resolvedTransport?: SupportedTransport;
   resolvedExtraParams?: Record<string, unknown>;
 }): Record<string, unknown> {
   const resolvedExtraParams =
@@ -165,7 +176,7 @@ export function resolvePreparedExtraParams(params: {
     merged.cachedContent = resolvedCachedContent;
     delete merged.cached_content;
   }
-  return (
+  const prepared =
     providerRuntimeDeps.prepareProviderExtraParams({
       provider: params.provider,
       config: params.cfg,
@@ -175,9 +186,28 @@ export function resolvePreparedExtraParams(params: {
         modelId: params.modelId,
         extraParams: merged,
         thinkingLevel: params.thinkingLevel,
+        agentDir: params.agentDir,
+        workspaceDir: params.workspaceDir,
       },
-    }) ?? merged
-  );
+    }) ?? merged;
+  const transportPatch =
+    providerRuntimeDeps.resolveProviderExtraParamsForTransport({
+      provider: params.provider,
+      config: params.cfg,
+      context: {
+        config: params.cfg,
+        provider: params.provider,
+        modelId: params.modelId,
+        extraParams: prepared,
+        thinkingLevel: params.thinkingLevel,
+        agentDir: params.agentDir,
+        workspaceDir: params.workspaceDir,
+        model: params.model,
+        transport: params.resolvedTransport,
+      },
+    })?.patch ?? undefined;
+  const sanitizedPatch = sanitizeExtraParamsRecord(transportPatch ?? undefined);
+  return sanitizedPatch ? { ...prepared, ...sanitizedPatch } : prepared;
 }
 
 function sanitizeExtraParamsRecord(
@@ -234,6 +264,18 @@ export function resolveAgentTransportOverride(params: {
     return undefined;
   }
   return resolveSupportedTransport(params.effectiveExtraParams?.transport);
+}
+
+export function resolveExplicitSettingsTransport(params: {
+  settingsManager: Pick<SettingsManager, "getGlobalSettings" | "getProjectSettings">;
+  sessionTransport: unknown;
+}): SupportedTransport | undefined {
+  const globalSettings = params.settingsManager.getGlobalSettings();
+  const projectSettings = params.settingsManager.getProjectSettings();
+  if (hasExplicitTransportSetting(globalSettings) || hasExplicitTransportSetting(projectSettings)) {
+    return resolveSupportedTransport(params.sessionTransport);
+  }
+  return undefined;
 }
 
 function createStreamFnWithExtraParams(
