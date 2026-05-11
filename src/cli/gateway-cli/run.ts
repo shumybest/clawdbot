@@ -786,19 +786,27 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
   gatewayLog.info("starting...");
   startupTrace.mark("cli.gateway-loop");
   const healthHost = await resolveGatewayBindHost(bind, cfg.gateway?.customBindHost);
+  let startupConfigSnapshotReadConsumed = false;
   const startLoop = async () =>
     await runGatewayLoop({
       runtime: defaultRuntime,
       lockPort: port,
       healthHost,
-      start: async ({ startupStartedAt } = {}) =>
-        await startGatewayServer(port, {
+      start: async ({ startupStartedAt } = {}) => {
+        const initialStartupConfigSnapshotRead = startupConfigSnapshotReadConsumed
+          ? undefined
+          : startupConfigSnapshotRead;
+        startupConfigSnapshotReadConsumed = true;
+        return await startGatewayServer(port, {
           bind,
           auth: authOverride,
           tailscale: tailscaleOverride,
           startupStartedAt,
-          ...(startupConfigSnapshotRead ? { startupConfigSnapshotRead } : {}),
-        }),
+          ...(initialStartupConfigSnapshotRead
+            ? { startupConfigSnapshotRead: initialStartupConfigSnapshotRead }
+            : {}),
+        });
+      },
     });
 
   const { detectRespawnSupervisor } = await import("../../infra/supervisor-markers.js");

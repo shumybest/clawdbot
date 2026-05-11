@@ -305,6 +305,35 @@ describe("gateway run option collisions", () => {
     );
   });
 
+  it("uses the pre-read config snapshot only for the first gateway-loop start", async () => {
+    runGatewayLoop.mockImplementationOnce(
+      async ({ start }: { start: (opts?: unknown) => Promise<unknown> }) => {
+        await start();
+        await start({ startupStartedAt: 12345 });
+      },
+    );
+
+    await runGatewayCli(["gateway", "run", "--allow-unconfigured"]);
+
+    expect(startGatewayServer).toHaveBeenCalledTimes(2);
+    expect(startGatewayServer).toHaveBeenNthCalledWith(
+      1,
+      18789,
+      expect.objectContaining({
+        startupConfigSnapshotRead: {
+          snapshot: configState.snapshot,
+        },
+      }),
+    );
+    expect(startGatewayServer).toHaveBeenNthCalledWith(
+      2,
+      18789,
+      expect.not.objectContaining({
+        startupConfigSnapshotRead: expect.anything(),
+      }),
+    );
+  });
+
   it("logs when first startup will build missing Control UI assets", async () => {
     controlUiState.root = null;
 
